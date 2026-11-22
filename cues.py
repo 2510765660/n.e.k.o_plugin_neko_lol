@@ -666,10 +666,13 @@ def build_event_cue(
             body = f"{inhib}被拆了。"
 
     elif event_name == "GameEnd":
-        # 只报"结束了"，**不提输赢** —— 结算结果留给 post_game 统一说。
-        # 早先这里也报一次胜负，30 多秒后 post_game 又说一遍，
-        # 猫娘连着两次表达同一件事。
-        body = "这局结束了。"
+        # 带一句结果。早先这里只说"这局结束了"，胜负留给 5 秒后的 post_game
+        # —— 但那样中间有 5 秒静默，听感上像卡住了。
+        # 现在这里说结果，post_game 那边只讲过程、不重复胜负（见
+        # build_post_game_cue 的 verdict_note）。
+        result = str(event.get("Result") or "").strip()
+        label = RESULT_LABELS.get(result, "")
+        body = f"这局结束了，{label}。" if label else "这局结束了。"
 
     else:  # pragma: no cover - EVENT_KEYS 已覆盖全部分支
         return None
@@ -746,7 +749,12 @@ def build_post_game_cue(
     names = champion_names or {}
     detail = _localize_names(state.post_game_text(result), names)
     if RESULT_LABELS.get(str(result or "").strip()):
-        verdict_note = "胜负以游戏给的结算结果为准，可以直接说。"
+        # GameEnd 那条播报已经把胜负说过了（5 秒前）。这里不再重复，
+        # 让猫娘把篇幅留给过程和高光。
+        verdict_note = (
+            "胜负刚才已经说过了（结算结果为准），这里**不要再重复输赢**，"
+            "重点讲这一局的过程、数据和最值得记住的瞬间。"
+        )
     else:
         verdict_note = (
             "注意：这局没收到游戏的结算结果，所以**不要说输赢**，"

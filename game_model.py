@@ -132,6 +132,10 @@ class MatchState:
     allies: list[PlayerStat] = field(default_factory=list)
     enemies: list[PlayerStat] = field(default_factory=list)
     my_names: set[str] = field(default_factory=set)
+    # 本局双方各拆掉几座塔。接口的 allPlayers 不给塔数，只能由插件
+    # 逐个数 TurretKilled 事件（见 __init__._count_turret）。默认 0。
+    ally_turrets: int = 0
+    enemy_turrets: int = 0
 
     # ── 构造 ────────────────────────────────────────────────────
 
@@ -380,7 +384,74 @@ class MatchState:
             verdict = f"（我方落后 {-lead} 个）"
         else:
             verdict = "（双方持平）"
-        return f"我方击杀 {ally_k}，敌方击杀 {enemy_k}{verdict}"
+
+        # 人头落后却赢了是常事（偷家、翻盘），不说清就会被模型解释成
+        # "虽然落后但还是赢了"这种别扭话。塔数能直接解释局面。
+        towers = ""
+        if self.ally_turrets or self.enemy_turrets:
+            towers = (
+                f"，我方拆了 {self.ally_turrets} 座塔、"
+                f"敌方拆了 {self.enemy_turrets} 座"
+            )
+            if lead < 0 and self.ally_turrets > self.enemy_turrets:
+                towers += "（塔数占优）"
+        return f"我方击杀 {ally_k}，敌方击杀 {enemy_k}{verdict}{towers}"
+
+    @staticmethod
+    def _human_duration(total_seconds: float) -> str:
+        """对局时长说人话：``00:37:58`` → ``37 分 58 秒``。
+
+        赛后总结里念 ``00:37:58`` 很累，而且容易被读成"零点三十七分"。
+        不足 1 分钟时只说秒数。
+        """
+        total = max(0, int(total_seconds))
+        hours, rem = divmod(total, 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours:
+            return f"{hours} 小时 {minutes} 分 {seconds} 秒"
+        if minutes:
+            return f"{minutes} 分 {seconds} 秒"
+        return f"{seconds} 秒"
+
+    def _item_line(self) -> str:
+        """装备一行：满 6 件说「六神装」，否则列件数 + 前三件。"""
+        if self.me is None or not self.me.items:
+            return "装备：读不到"
+        count = len(self.me.items)
+        shown = "、".join(self.me.items[:3])
+        if count >= 6:
+            return f"装备：六神装（{shown} …）"
+        return f"装备：{count} 件（{shown}）"
+
+    def _highlights(self) -> list[str]:
+        """本局高光：人头王、助攻王、主人的对位对比。
+
+        全部从当前快照算，不猜。认不出主人或不满足条件时跳过对应那行。
+        """
+        lines: list[str] = []
+        everyone = list(self.allies) + list(self.enemies)
+        if not everyone:
+            return lines
+
+        top_kill = max(everyone, key=lambda p: p.kills)
+        if top_kill.kills > 0:
+            side = "我方" if top_kill in self.allies else "敌方"
+            lines.append(f"人头王：{top_kill.champion} {top_kill.kills} 杀（{side}）")
+
+        top_assist = max(everyone, key=lambda p: p.assists)
+        if top_assist.assists > 0 and top_assist is not top_kill:
+            side = "我方" if top_assist in self.allies else "敌方"
+            lines.append(
+                f"助攻王：{top_assist.champion} {top_assist.assists} 助攻（{side}）"
+            )
+
+        opponent = self.lane_opponent()
+        if self.me is not None and opponent is not None:
+            lines.append(
+                f"主人对位：{self.me.champion} {self.me.kda} 对 "
+                f"{opponent.champion} {opponent.kda}"
+            )
+        return lines
 
     def post_game_text(self, result: str = "") -> str:
         """赛后总结。用最后一份快照渲染。
@@ -391,19 +462,28 @@ class MatchState:
         拿不到结果时**不猜胜负**：击杀数多不代表赢了（可能是被偷家），
         猜错比不说更糟。这种情况下只报事实（时长、战绩、比分），
         胜负留白，由提示语明确告诉模型"别说输赢"。
+
+        时长用自然语言（「37 分 58 秒」）而不是 ``00:37:58`` —— 后者念起来
+        累，还容易被读成"零点三十七分"。
         """
+        duration = self._human_duration(self.game_time)
         if self.me is None:
-            return f"这局打完了，对局时长 {self.game_time_label}。"
+            return f"这局打完了，一共打了 {duration}。"
 
         label = RESULT_LABELS.get(str(result or "").strip(), "")
-        head = f"对局结束：{self.map_name}·{self.game_mode}，时长 {self.game_time_label}"
+        head = f"对局结束：{self.map_name}·{self.game_mode}，一共打了 {duration}"
         head = f"{head}，{label}。" if label else f"{head}。"
 
-        return (
-            f"{head}\n"
-            f"主人：{self.me.one_line(with_items=True)}\n"
-            f"{self.score_line()}"
-        )
+        parts = [
+            head,
+            f"主人：{self.me.one_line()}",
+            self._item_line(),
+            self.score_line(),
+        ]
+        parts.extend(self._highlights())
+        if self.me.deaths == 0:
+            parts.append("主人这局一次没死。")
+        return chr(10).join(parts)
 
 
 # 排位/灵活排位里，接口 allPlayers 里**同队内部的顺序**固定是分路顺序。

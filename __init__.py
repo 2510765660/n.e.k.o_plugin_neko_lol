@@ -41,6 +41,7 @@ from .cues import (
     OthersMultikill,
     _normalize_body,
     _parse_structure,
+    _side_from_team_tag,
     build_event_cue,
     build_post_game_cue,
     build_summary_cue,
@@ -223,6 +224,9 @@ class NekoLolPlugin(NekoPluginBase):
         self._first_blood_suppress: tuple[str, float] | None = None
         # 双方各拿了几条小龙。接口不给"这是第几条"，只能自己数。
         # 换局时清零（见 _adopt_session）。
+        # 本局双方各拆掉几座塔。接口不给，只能数 TurretKilled 事件。
+        # 用来说明"人头落后但塔数占优"这类局面（见 score_line）。
+        self._turret_counts: dict[str, int] = {"ally": 0, "enemy": 0}
         self._dragon_counts: dict[str, int] = {"ally": 0, "enemy": 0}
         # 本局的龙魂属性 = **本局第 3 条被击败的小龙**的属性（不分哪方）。
         # 某方累计拿到 4 条即获得这个龙魂，与中途拿了哪些属性无关。
@@ -358,6 +362,9 @@ class NekoLolPlugin(NekoPluginBase):
             data, trust_lane_order=self._cfg.infer_lane_positions
         )
         self._last_state = state
+        # 塔数由插件自己数，接口不提供 —— 每拍同步进快照，score_line 才读得到。
+        state.ally_turrets = self._turret_counts["ally"]
+        state.enemy_turrets = self._turret_counts["enemy"]
 
         if not self._in_game:
             self._in_game = True
@@ -435,6 +442,8 @@ class NekoLolPlugin(NekoPluginBase):
         # 刚播报过的一血：(被拿者, 事件时间)。同一次击杀接口会**同时**发
         # FirstBlood 和 ChampionKill，只该说"一血"那一句。
         self._first_blood_suppress: tuple[str, float] | None = None
+        # 本局双方各拆掉几座塔（跨局要清零）。
+        self._turret_counts = {"ally": 0, "enemy": 0}
         # 双方各拿了几条小龙。接口不给"这是第几条"，只能自己数。
         self._dragon_counts: dict[str, int] = {"ally": 0, "enemy": 0}
         # 爆发小结的取样窗口：新的一局必须清空，上一局的人头不能带进来。
@@ -635,6 +644,8 @@ class NekoLolPlugin(NekoPluginBase):
                 self._handle_dragon(event, state, now)
             elif name in ("TurretKilled", "InhibKilled"):
                 self._note_structure_if_unparsed(event, name, state)
+                if name == "TurretKilled":
+                    self._count_turret(event, state)
                 self._handle_plain_event(event, state, now)
             elif name == "GameEnd":
                 self._record_game_result(event)
@@ -916,6 +927,21 @@ class NekoLolPlugin(NekoPluginBase):
         """小龙：先累加计数（第三/四条要提龙魂），再走通用播报。"""
         self._count_dragon(event, state)
         self._handle_plain_event(event, state, now)
+
+    def _count_turret(self, event: dict, state: MatchState) -> None:
+        """数一座塔。归属看结构名里的队伍 tag（T1/T2、TOrder/TChaos）。
+
+        接口的 allPlayers 不给塔数，只能自己数 —— 赛后总结靠它解释
+        "人头落后但塔数占优"这种局面。
+        """
+        info = _parse_structure(event.get("TurretKilled"))
+        side = _side_from_team_tag(info["raw_team"], state)
+        if side in self._turret_counts:
+            self._turret_counts[side] += 1
+            self._log(
+                f"[塔] {side} 第 {self._turret_counts[side]} 座"
+                f"（{event.get('TurretKilled')!r}）"
+            )
 
     def _count_dragon(self, event: dict, state: MatchState) -> None:
         """累加双方小龙数与全场总数，第 3 条时锁定龙魂属性。

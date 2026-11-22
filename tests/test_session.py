@@ -1514,7 +1514,8 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertIn("上路外塔", new_texts[0])
         self.assertIn("兵营", new_texts[0])
         self.assertIn("这局结束了", new_texts[1])
-        self.assertNotIn("赢了", new_texts[1], "game_end 不该提输赢")
+        # 现在 game_end 直接说结果（消除 5 秒静默）
+        self.assertIn("赢了", new_texts[1], "game_end 应当带上结果")
 
     async def test_post_game_fires_five_seconds_after_game_end(self):
         """收到 GameEnd 后 5 秒就播赛后总结，不再等"数据消失 20 秒"判定。

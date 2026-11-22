@@ -1037,17 +1037,32 @@ class TestCues(unittest.TestCase):
             self.assertNotIn("主人现在", cue.text, f"Result={result} 仍带战绩")
             self.assertNotIn("补刀", cue.text)
 
-    def test_game_end_does_not_state_verdict(self):
-        """game_end 只报"结束了"，不提输赢 —— 胜负由 post_game 统一说。"""
-        for result in ("Win", "Lose", "Draw", ""):
+    def test_game_end_states_the_verdict(self):
+        """game_end 直接说结果。
+
+        早先只说"这局结束了"，胜负留给 5 秒后的 post_game —— 中间那 5 秒
+        是静默空档，听感上像卡住了。现在这里说结果，post_game 只讲过程。
+        """
+        cases = {"Win": "赢了", "Lose": "输了", "Draw": "平局"}
+        for result, word in cases.items():
             cue = cues.build_event_cue(
                 {"EventName": "GameEnd", "Result": result}, self.state
             )
-            for word in ("赢", "输", "平局"):
-                self.assertNotIn(
-                    word, cue.body, f"Result={result} 时 game_end 提了{word}：{cue.body}"
-                )
             self.assertIn("这局结束了", cue.body)
+            self.assertIn(word, cue.body, f"Result={result} 没说结果：{cue.body}")
+
+    def test_game_end_without_result_says_nothing_about_verdict(self):
+        """没收到 Result 时不能猜输赢。"""
+        cue = cues.build_event_cue({"EventName": "GameEnd"}, self.state)
+        self.assertEqual(cue.body.strip(), "这局结束了。")
+        for word in ("赢了", "输了", "平局"):
+            self.assertNotIn(word, cue.body)
+
+    def test_post_game_does_not_repeat_the_verdict(self):
+        """胜负已在 game_end 说过，post_game 的提示语要明确让它别重复。"""
+        cue = cues.build_post_game_cue(self.state, result="Win")
+        self.assertIn("不要再重复输赢", cue.text)
+        self.assertNotIn("可以直接说", cue.text)
 
     def test_unknown_event_ignored(self):
         self.assertIsNone(cues.build_event_cue({"EventName": "MinionsSpawning"}, self.state))
