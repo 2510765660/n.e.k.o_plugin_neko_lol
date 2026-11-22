@@ -128,8 +128,6 @@ except ModuleNotFoundError:  # 离线跑单元测试时的等价兜底
 # 注意：它只在这里说明，装饰器里必须写字面量 2 —— 静态检查不认常量名。
 # 连续多少次拿不到数据才判定"对局结束"。单次失败可能只是网络抖动，
 # 立刻宣布结束会产出莫名其妙的赛后总结。
-# GameEnd 之后隔多久播赛后总结（秒）。
-_POST_GAME_DELAY_SECONDS = 5.0
 _GAME_OVER_FAILURES = 3
 # 本局事件记录的容量上限，供 LLM 工具查询"刚才发生了什么"。
 #
@@ -251,8 +249,8 @@ class NekoLolPlugin(NekoPluginBase):
         # GameEnd 事件里的权威胜负（Win/Lose/Draw）。赛后总结用它，
         # 而不是按击杀数猜 —— 接口确实给了结果。
         self._game_result: str = ""
-        # GameEnd 之后延迟几秒再播赛后总结（等最后一批事件落地）。
-        self._post_game_due_at: float = 0.0
+        # GameEnd 到了就立刻排赛后总结（与"这局结束了"合并成一条）。
+        self._post_game_immediate: bool = False
         # 本局是否已经播过赛后总结 —— GameEnd 路径和数据消失路径都会播，
         # 没有这个标记就会说两遍。
         self._post_game_sent: bool = False
@@ -414,11 +412,6 @@ class NekoLolPlugin(NekoPluginBase):
 
         self._maybe_summary(state, now)
 
-        # GameEnd 排期的赛后总结：到点就播，不等数据消失判定。
-        if self._post_game_due_at and now >= self._post_game_due_at:
-            self._narrator.force_flush(now)
-            self._emit_post_game(now)
-
         self._narrator.flush(now)
         return Ok({"status": "in_game", "game_time": state.game_time_label})
 
@@ -466,8 +459,8 @@ class NekoLolPlugin(NekoPluginBase):
         # 上一局的小结进度和结算结果都不能带进新局。
         self._last_summary_game_time: float = 0.0
         self._game_result: str = ""
-        # GameEnd 之后延迟几秒再播赛后总结（等最后一批事件落地）。
-        self._post_game_due_at: float = 0.0
+        # GameEnd 到了就立刻排赛后总结（与"这局结束了"合并成一条）。
+        self._post_game_immediate: bool = False
         # 本局是否已经播过赛后总结 —— GameEnd 路径和数据消失路径都会播，
         # 没有这个标记就会说两遍。
         self._post_game_sent: bool = False
@@ -536,6 +529,11 @@ class NekoLolPlugin(NekoPluginBase):
             return
         if not self._cfg.post_game_summary or self._last_state is None:
             return
+        # 面板上的「赛后总结」开关也要生效 —— 合并之后它是唯一的结束播报，
+        # 关掉就等于"对局结束什么都不说"。
+        if not is_announced("post_game", self._cfg.announce):
+            self._log("[播报] 赛后总结已在面板上关闭，跳过")
+            return
         cue = build_post_game_cue(
             self._last_state,
             champion_names=self._champion_names,
@@ -545,7 +543,6 @@ class NekoLolPlugin(NekoPluginBase):
         # 赛后总结错过就永远没机会说了，跳过所有间隔检查。
         self._narrator.submit(cue, now, force=True)
         self._post_game_sent = True
-        self._post_game_due_at = 0.0
 
     def _on_data_missing(self, now: float) -> None:
         """拿不到数据。可能是没在打，也可能只是一次抖动。"""
@@ -650,21 +647,24 @@ class NekoLolPlugin(NekoPluginBase):
             elif name == "GameEnd":
                 self._record_game_result(event)
                 # 对局已经结束，窗口里攒着的推塔/兵营再不说是不会有机会了 ——
-                # 先把合并内容发出去，紧接着才播"这局结束了"。
+                # 先把合并内容发出去。
                 self._narrator.force_flush(now)
-                self._handle_plain_event(event, state, now)
-                # GameEnd 本身就是权威结束信号，不必再等"数据消失 20 秒"
-                # 那套判定。排 5 秒后播赛后总结：留一点时间让最后一批
-                # 人头/推塔事件落地，否则总结会少算最后几秒的战果。
-                self._post_game_due_at = now + _POST_GAME_DELAY_SECONDS
-                self._log(
-                    f"[对局] 已收到结算事件，{_POST_GAME_DELAY_SECONDS:.0f} 秒后播赛后总结"
-                )
+                # 「这局结束了」和赛后总结合并成一条：GameEnd 一到就直接播
+                # 总结，不再先播一句"这局结束了"再等 5 秒。
+                # 标记成"本拍结束就发"，等这批事件全部处理完再发 —— 否则
+                # GameEnd 后面还跟着的人头/推塔会漏算（接口偶发把 GameEnd
+                # 夹在中间）。
+                self._post_game_immediate = True
             else:
                 self._handle_plain_event(event, state, now)
 
         # 整拍处理完再结算爆发小结。
         self._flush_burst_summary(state, now)
+
+        # GameEnd 到了就立刻播赛后总结（与"这局结束了"合并成一条）。
+        if self._post_game_immediate:
+            self._post_game_immediate = False
+            self._emit_post_game(now)
 
     # ── 事件处理器 ──────────────────────────────────────────────
 

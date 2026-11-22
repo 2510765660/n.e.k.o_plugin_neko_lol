@@ -1510,39 +1510,57 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(h.plugin._narrator.queue_depth, 0, "窗口没被结算")
         new_texts = [p["parts"][0]["text"] for p in h.pushed[base:]]
-        self.assertEqual(len(new_texts), 2, f"应当是合并内容 + game_end：{new_texts}")
+        # 合并内容 + 赛后总结（"这局结束了"已并入总结，不再单独播）
+        self.assertEqual(len(new_texts), 2, f"应当是合并内容 + 赛后总结：{new_texts}")
         self.assertIn("上路外塔", new_texts[0])
         self.assertIn("兵营", new_texts[0])
-        self.assertIn("这局结束了", new_texts[1])
-        # 现在 game_end 直接说结果（消除 5 秒静默）
-        self.assertIn("赢了", new_texts[1], "game_end 应当带上结果")
+        self.assertIn("刚打完一局", new_texts[1], "GameEnd 当轮该播赛后总结")
+        self.assertIn("赢了", new_texts[1], "总结里应当带结果")
+        self.assertNotIn("这局结束了。", new_texts[1], "不该再有独立的结束播报")
 
-    async def test_post_game_fires_five_seconds_after_game_end(self):
-        """收到 GameEnd 后 5 秒就播赛后总结，不再等"数据消失 20 秒"判定。
+    async def test_game_end_plays_post_game_immediately(self):
+        """GameEnd 一到就直接播赛后总结 —— 两者合并成一条。
 
-        GameEnd 本身就是权威结束信号。旧逻辑要等接口消失 + 连续 3 次失败
-        + 20 秒宽限，实测平均 31 秒才出总结。
+        早先是"这局结束了" + 5 秒后"赛后总结"两条。中间那段静默听感上
+        像卡住，而且一句话信息量太低。
         """
         h = await self._harness({"window_seconds": 30, "game_over_grace_seconds": 20})
         _start_fresh_game(h)
         await h.poll(times=1)
         await h.settle()
+        base = len(h.pushed)
 
+        # game_time 用 890：避开 900 秒那个定时小结点，否则会多一条小结
         h.client.events.append(fixtures.simple_event(10, "GameEnd", Result="Win"))
-        h.client.data = fixtures.make_all_game_data(game_time=900)
+        h.client.data = fixtures.make_all_game_data(game_time=890)
         await h.poll(times=1, dt=2.0)
 
-        # 当轮只播 game_end，不该有总结
-        texts = " | ".join(p["parts"][0]["text"] for p in h.pushed)
-        self.assertIn("这局结束了", texts)
-        self.assertNotIn("刚打完一局", texts, "GameEnd 当轮就播了总结，没等 5 秒")
+        new_texts = [p["parts"][0]["text"] for p in h.pushed[base:]]
+        self.assertEqual(len(new_texts), 1, f"应当只发一条总结：{new_texts}")
+        self.assertIn("刚打完一局", new_texts[0], "GameEnd 当轮没播总结")
+        # 合并且不再有独立的"这局结束了"
+        self.assertNotIn("这局结束了。", new_texts[0], new_texts[0])
 
-        # 5 秒后（接口仍然正常，没有"数据消失"）就该出总结
-        for _ in range(4):
-            h.client.data = fixtures.make_all_game_data(game_time=902)
-            await h.poll(times=1, dt=2.0)
-        texts = " | ".join(p["parts"][0]["text"] for p in h.pushed)
-        self.assertIn("刚打完一局", texts, "5 秒后没播赛后总结")
+    async def test_post_game_switch_mutes_the_only_end_broadcast(self):
+        """合并之后赛后总结是唯一的结束播报，面板开关必须生效。"""
+        h = await self._harness({
+            "window_seconds": 30,
+            "announce": {"post_game": False},
+        })
+        _start_fresh_game(h)
+        await h.poll(times=1)
+        await h.settle()
+        base = len(h.pushed)
+
+        h.client.events.append(fixtures.simple_event(10, "GameEnd", Result="Win"))
+        h.client.data = fixtures.make_all_game_data(game_time=890)
+        await h.poll(times=4, dt=2.0)
+
+        new_texts = [p["parts"][0]["text"] for p in h.pushed[base:]]
+        self.assertFalse(
+            any("刚打完一局" in t for t in new_texts),
+            f"关掉开关后仍播了总结：{new_texts}",
+        )
 
     async def test_post_game_not_repeated_by_data_missing_path(self):
         """GameEnd 已经播过总结后，数据消失判定不能再播第二遍。"""
