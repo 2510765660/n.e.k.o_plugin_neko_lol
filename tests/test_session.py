@@ -1157,6 +1157,72 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await fired(5), "5 杀就触发了，门槛没生效")
         self.assertTrue(await fired(8), "8 杀没触发")
 
+    async def test_roster_is_captured_at_game_start(self):
+        """开局记下双方阵容；排位带分路后缀，非排位不带。"""
+        h = await self._harness({"window_seconds": 1})
+        _start_fresh_game(h)
+        await h.poll(times=1)
+
+        roster = h.plugin._roster_text
+        self.assertTrue(roster, "开局没记阵容")
+        self.assertIn("我方：", roster)
+        self.assertIn("敌方：", roster)
+        # 默认夹具是峡谷（分路可信）→ 每个英雄后面都该有分路后缀
+        self.assertIn("（上单）", roster, f"排位没带分路：{roster}")
+        self.assertIn("（打野）", roster, roster)
+
+        # 阵容也要进 _recent，"刚才发生了什么"能看到
+        self.assertTrue(
+            any(t.startswith("阵容｜") for _at, t in h.plugin._recent),
+            f"_recent 里没有阵容：{list(h.plugin._recent)}",
+        )
+
+    async def test_roster_has_no_lane_suffix_in_aram(self):
+        h = await self._harness({"window_seconds": 1})
+        h.client.in_game = True
+        h.client.data = fixtures.make_all_game_data(game_time=5.0, map_number=12)
+        h.client.events = [fixtures.simple_event(0, "GameStart")]
+        await h.poll(times=1)
+        self.assertNotIn("（上单）", h.plugin._roster_text,
+                         f"大乱斗不该有分路：{h.plugin._roster_text}")
+
+    async def test_recent_and_roster_clear_between_matches(self):
+        """换局时上一局的播报和阵容都要清掉。"""
+        h = await self._harness({"window_seconds": 1})
+        _start_fresh_game(h)
+        await h.poll(times=1)
+        first_roster = h.plugin._roster_text
+        h.client.events.append(fixtures.kill_event(1, "我", "敌人A"))
+        h.client.data = fixtures.make_all_game_data(game_time=60.0)
+        await h.poll(times=5)
+        self.assertGreater(len(h.plugin._recent), 1)
+
+        # 断流 → 新局（gameTime 倒流）
+        h.client.in_game = False
+        await h.poll(times=12, dt=2.0)
+        h.client.in_game = True
+        # 换一套阵容，才能验证 roster 真的重算了
+        h.client.data = fixtures.make_all_game_data(game_time=0.0, players=[
+            fixtures.make_player("我", "暗裔剑魔", "ORDER"),
+            fixtures.make_player("队友A", "疾风剑豪", "ORDER"),
+            fixtures.make_player("敌人A", "离群之刺", "CHAOS"),
+            fixtures.make_player("敌人B", "影流之镰", "CHAOS"),
+        ])
+        h.client.events = [fixtures.simple_event(100, "GameStart")]
+        await h.poll(times=2)
+
+        self.assertNotEqual(h.plugin._roster_text, first_roster, "阵容没更新")
+        self.assertIn("暗裔剑魔", h.plugin._roster_text, h.plugin._roster_text)
+        # 新局只该有「阵容」+「开局」两条，上一局的人头和击杀必须没了
+        self.assertEqual(len(h.plugin._recent), 2,
+                         f"旧局播报没清：{list(h.plugin._recent)}")
+        texts = [t for _a, t in h.plugin._recent]
+        self.assertTrue(any(t.startswith("阵容｜") for t in texts), texts)
+        self.assertFalse(
+            any("击杀了对面的" in t for t in texts),
+            f"上一局的击杀还在：{texts}",
+        )
+
     async def test_ace_suppresses_burst_summary(self):
         """同一拍里出现团灭时，跳过爆发小结（团灭已经把这一波说清楚了）。
 

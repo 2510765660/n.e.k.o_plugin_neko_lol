@@ -130,8 +130,12 @@ except ModuleNotFoundError:  # 离线跑单元测试时的等价兜底
 # GameEnd 之后隔多久播赛后总结（秒）。
 _POST_GAME_DELAY_SECONDS = 5.0
 _GAME_OVER_FAILURES = 3
-# 最近事件环形缓冲的容量，供 LLM 工具查询"刚才发生了什么"。
-_RECENT_MAX = 20
+# 本局事件记录的容量上限，供 LLM 工具查询"刚才发生了什么"。
+#
+# 语义是"整局留存"：一局 30 分钟的峡谷对局大约 30~60 条播报，大乱斗更多。
+# 这里给 500 —— 正常对局远到不了，纯粹当保险丝，防止极端情况下无界增长。
+# 换局时由 _reset_match_state 清空。
+_RECENT_MAX = 500
 # 大乱斗：多少秒内的第二次（及以上）阵亡算"连着倒"。
 _ARAM_DEATH_WINDOW_SECONDS = 20.0
 # 英雄名映射表（放在插件数据目录，都可选）。
@@ -267,6 +271,10 @@ class NekoLolPlugin(NekoPluginBase):
 
         self._champion_names: dict[str, str] = {}
         self._recent: Deque[tuple[str, str]] = deque(maxlen=_RECENT_MAX)
+        # 本局双方阵容的一行摘要（开局生成，整局保留）。
+        # 单独存一份是因为 _recent 会随播报增长，虽然已经改成整局留存，
+        # 但阵容是"开局就知道、后面一直要用"的稳定信息，不该混在事件流里。
+        self._roster_text: str = ""
 
     # ── 生命周期 ────────────────────────────────────────────────
 
@@ -420,6 +428,10 @@ class NekoLolPlugin(NekoPluginBase):
         self._my_multi = MyMultikill()
         self._milestones = LaneMilestones()
         self._game_start_announced = False
+        # 上一局的播报和阵容不能带进新局 —— 否则开局问"刚才发生了什么"
+        # 会答出上一局的事，问"两边都有谁"会对不上当前阵容。
+        self._recent.clear()
+        self._roster_text = ""
         # 刚播报过的一血：(被拿者, 事件时间)。同一次击杀接口会**同时**发
         # FirstBlood 和 ChampionKill，只该说"一血"那一句。
         self._first_blood_suppress: tuple[str, float] | None = None
@@ -1010,6 +1022,11 @@ class NekoLolPlugin(NekoPluginBase):
             if self._game_start_announced:
                 return
             self._game_start_announced = True
+            # 开局就把阵容定下来：整局保留在 _roster_text，并写一条进
+            # _recent，这样"刚才发生了什么"里第一条就是阵容。
+            self._roster_text = self._build_roster_text(state)
+            self._recent.append((state.game_time_label, "阵容｜" + self._roster_text))
+            self._log(f"[对局] 阵容：{self._roster_text}")
 
         self._record_recent(state, cue)
         self._narrator.submit(cue, now)
@@ -1136,6 +1153,27 @@ class NekoLolPlugin(NekoPluginBase):
         )
         return result if isinstance(result, dict) else {"submitted": True}
 
+    def _build_roster_text(self, state: MatchState) -> str:
+        """本局双方阵容的一行摘要。
+
+        排位/灵活排位（``lanes_trusted``）时给每个英雄补分路后缀，例如
+        ``虚空恐惧（上单）``；普通匹配和大乱斗不补 —— 那些模式的数组顺序
+        不代表分路，硬加等于编造。
+
+        认不出某个人时不写空括号，直接只留英雄名。
+        """
+
+        def label(player) -> str:
+            champion = player.champion or player.name or "未知"
+            if not state.lanes_trusted:
+                return champion
+            lane = state.lane_of(player.name)
+            return f"{champion}（{lane}）" if lane else champion
+
+        allies = "、".join(label(p) for p in state.allies) or "读不到"
+        enemies = "、".join(label(p) for p in state.enemies) or "读不到"
+        return f"我方：{allies} ｜ 敌方：{enemies}"
+
     def _record_recent(self, state: MatchState, cue: Cue) -> None:
         """记一份"刚才发生了什么"，供 LLM 工具查询。"""
         self._recent.append((state.game_time_label, render_plain(cue)))
@@ -1240,9 +1278,12 @@ class NekoLolPlugin(NekoPluginBase):
             "mode": state.game_mode,
             "me": _player_dict(state.me),
             "score": state.score_line(),
+            # 阵容摘要（排位带分路后缀）。开局就定下，整局不变。
+            "roster": self._roster_text or self._build_roster_text(state),
             "allies": [_player_dict(p) for p in state.allies],
             "enemies": [_player_dict(p) for p in state.enemies],
-            "recent_events": [text for _clock, text in self._recent][-6:],
+            # 整局留存，不再只给最近 6 条 —— 主人问"开局谁打谁"要能答上。
+            "recent_events": [text for _clock, text in self._recent],
         }
 
     @llm_tool(
