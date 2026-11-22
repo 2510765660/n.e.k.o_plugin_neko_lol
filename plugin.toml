@@ -168,4 +168,3 @@ turret_killed = true
 inhib_killed = true
 # 定期战况小结 / 赛后总结也能单独关掉
 summary = true
-post_game = true

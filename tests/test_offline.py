@@ -1058,11 +1058,26 @@ class TestCues(unittest.TestCase):
         for word in ("赢了", "输了", "平局"):
             self.assertNotIn(word, cue.body)
 
-    def test_post_game_does_not_repeat_the_verdict(self):
-        """胜负已在 game_end 说过，post_game 的提示语要明确让它别重复。"""
+    def test_end_broadcast_carries_the_verdict(self):
+        """对局结束播报是唯一一条，胜负必须由它来说。"""
         cue = cues.build_post_game_cue(self.state, result="Win")
-        self.assertIn("不要再重复输赢", cue.text)
-        self.assertNotIn("可以直接说", cue.text)
+        self.assertEqual(cue.key, "game_end", "结束播报该用 game_end 这个 key")
+        self.assertIn("可以直接说", cue.text)
+        self.assertIn("赢了", cue.text)
+
+    def test_end_broadcast_includes_pending_items(self):
+        """窗口里没说完的推塔/兵营要并进这条，而不是单独再发一轮。"""
+        cue = cues.build_post_game_cue(
+            self.state, result="Win",
+            pending_items=["主人拆掉了对面的中路二塔", "敌方拆掉了我们的上路外塔"],
+        )
+        self.assertIn("对局结束前最后发生的事", cue.text)
+        self.assertIn("中路二塔", cue.text)
+        self.assertIn("上路外塔", cue.text)
+
+    def test_end_broadcast_without_pending_has_no_tail(self):
+        cue = cues.build_post_game_cue(self.state, result="Win")
+        self.assertNotIn("对局结束前最后发生的事", cue.text)
 
     def test_unknown_event_ignored(self):
         self.assertIsNone(cues.build_event_cue({"EventName": "MinionsSpawning"}, self.state))

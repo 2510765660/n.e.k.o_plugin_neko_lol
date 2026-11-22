@@ -696,7 +696,7 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         h = await self._harness({"game_over_grace_seconds": 4})
         _start_fresh_game(h)
         await h.poll(times=1)
-        await h.plugin.set_announce(event="post_game", enabled=False)
+        await h.plugin.set_announce(event="game_end", enabled=False)
 
         h.client.in_game = False
         await h.poll(times=6, dt=2.0)
@@ -1510,13 +1510,13 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(h.plugin._narrator.queue_depth, 0, "窗口没被结算")
         new_texts = [p["parts"][0]["text"] for p in h.pushed[base:]]
-        # 合并内容 + 赛后总结（"这局结束了"已并入总结，不再单独播）
-        self.assertEqual(len(new_texts), 2, f"应当是合并内容 + 赛后总结：{new_texts}")
-        self.assertIn("上路外塔", new_texts[0])
-        self.assertIn("兵营", new_texts[0])
-        self.assertIn("刚打完一局", new_texts[1], "GameEnd 当轮该播赛后总结")
-        self.assertIn("赢了", new_texts[1], "总结里应当带结果")
-        self.assertNotIn("这局结束了。", new_texts[1], "不该再有独立的结束播报")
+        # 现在窗口内容**并进总结**，只有一条
+        self.assertEqual(len(new_texts), 1, f"应当只发一条合并播报：{new_texts}")
+        text = new_texts[0]
+        self.assertIn("刚打完一局", text, "GameEnd 当轮该播总结")
+        self.assertIn("赢了", text, "总结里应当带结果")
+        self.assertIn("上路外塔", text, "窗口里的塔没并进总结")
+        self.assertIn("兵营", text, "窗口里的兵营没并进总结")
 
     async def test_game_end_plays_post_game_immediately(self):
         """GameEnd 一到就直接播赛后总结 —— 两者合并成一条。
@@ -1545,7 +1545,7 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         """合并之后赛后总结是唯一的结束播报，面板开关必须生效。"""
         h = await self._harness({
             "window_seconds": 30,
-            "announce": {"post_game": False},
+            "announce": {"game_end": False},
         })
         _start_fresh_game(h)
         await h.poll(times=1)

@@ -704,15 +704,6 @@
                 "en": "Periodic summary"
               },
               "default": true
-            },
-            "post_game": {
-              "type": "boolean",
-              "x-title-i18n": {
-                "zh-CN": "赛后总结",
-                "zh-TW": "賽後總結",
-                "en": "Post-game summary"
-              },
-              "default": true
             }
           }
         },

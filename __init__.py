@@ -162,7 +162,6 @@ _TOGGLE_EVENTS: tuple[str, ...] = (
     "inhib_killed",
     "game_end",
     "summary",
-    "post_game",
 )
 
 # 插件认识的全部事件类型。未知的会打日志提醒（每种一次）。
@@ -194,7 +193,6 @@ _EVENT_LABELS: dict[str, str] = {
     "inhib_killed": "破兵营",
     "game_end": "对局结束",
     "summary": "定期小结",
-    "post_game": "赛后总结",
 }
 
 
@@ -249,8 +247,8 @@ class NekoLolPlugin(NekoPluginBase):
         # GameEnd 事件里的权威胜负（Win/Lose/Draw）。赛后总结用它，
         # 而不是按击杀数猜 —— 接口确实给了结果。
         self._game_result: str = ""
-        # GameEnd 到了就立刻排赛后总结（与"这局结束了"合并成一条）。
-        self._post_game_immediate: bool = False
+        # GameEnd 到了就立刻播那一条合并播报（对局结束 = 完整总结）。
+        self._game_end_immediate: bool = False
         # 本局是否已经播过赛后总结 —— GameEnd 路径和数据消失路径都会播，
         # 没有这个标记就会说两遍。
         self._post_game_sent: bool = False
@@ -459,8 +457,8 @@ class NekoLolPlugin(NekoPluginBase):
         # 上一局的小结进度和结算结果都不能带进新局。
         self._last_summary_game_time: float = 0.0
         self._game_result: str = ""
-        # GameEnd 到了就立刻排赛后总结（与"这局结束了"合并成一条）。
-        self._post_game_immediate: bool = False
+        # GameEnd 到了就立刻播那一条合并播报（对局结束 = 完整总结）。
+        self._game_end_immediate: bool = False
         # 本局是否已经播过赛后总结 —— GameEnd 路径和数据消失路径都会播，
         # 没有这个标记就会说两遍。
         self._post_game_sent: bool = False
@@ -529,15 +527,19 @@ class NekoLolPlugin(NekoPluginBase):
             return
         if not self._cfg.post_game_summary or self._last_state is None:
             return
-        # 面板上的「赛后总结」开关也要生效 —— 合并之后它是唯一的结束播报，
+        # 面板上的「对局结束」开关 —— 现在它是唯一的结束播报，
         # 关掉就等于"对局结束什么都不说"。
-        if not is_announced("post_game", self._cfg.announce):
-            self._log("[播报] 赛后总结已在面板上关闭，跳过")
+        if not is_announced("game_end", self._cfg.announce):
+            self._log("[播报] 对局结束播报已在面板上关闭，跳过")
             return
+        # 窗口里还攒着的推塔/兵营等 —— 对局结束了，再等窗口就没机会说，
+        # 所以并进这一条一起报，而不是先单独发一轮。
+        pending = self._narrator.take_pending_bodies()
         cue = build_post_game_cue(
             self._last_state,
             champion_names=self._champion_names,
             result=self._game_result,
+            pending_items=pending,
         )
         self._record_recent(self._last_state, cue)
         # 赛后总结错过就永远没机会说了，跳过所有间隔检查。
@@ -646,24 +648,22 @@ class NekoLolPlugin(NekoPluginBase):
                 self._handle_plain_event(event, state, now)
             elif name == "GameEnd":
                 self._record_game_result(event)
-                # 对局已经结束，窗口里攒着的推塔/兵营再不说是不会有机会了 ——
-                # 先把合并内容发出去。
-                self._narrator.force_flush(now)
-                # 「这局结束了」和赛后总结合并成一条：GameEnd 一到就直接播
-                # 总结，不再先播一句"这局结束了"再等 5 秒。
+                # 对局结束了 —— 这条播报就是**唯一的结束播报**：
+                # 「这局结束了 + 完整总结」，并且把窗口里还没说出口的
+                # 推塔/兵营等也一并带上（_emit_post_game 里取）。
                 # 标记成"本拍结束就发"，等这批事件全部处理完再发 —— 否则
                 # GameEnd 后面还跟着的人头/推塔会漏算（接口偶发把 GameEnd
                 # 夹在中间）。
-                self._post_game_immediate = True
+                self._game_end_immediate = True
             else:
                 self._handle_plain_event(event, state, now)
 
         # 整拍处理完再结算爆发小结。
         self._flush_burst_summary(state, now)
 
-        # GameEnd 到了就立刻播赛后总结（与"这局结束了"合并成一条）。
-        if self._post_game_immediate:
-            self._post_game_immediate = False
+        # GameEnd 到了就立刻播那一条合并播报。
+        if self._game_end_immediate:
+            self._game_end_immediate = False
             self._emit_post_game(now)
 
     # ── 事件处理器 ──────────────────────────────────────────────
@@ -1434,8 +1434,7 @@ class NekoLolPlugin(NekoPluginBase):
                 {
                     "id": "session",
                     "title": "对局与提醒",
-                    "keys": ["game_start", "game_end", "summary", "post_game",
-                             "milestone"],
+                    "keys": ["game_start", "game_end", "summary", "milestone"],
                 },
             ],
             "dry_run": bool(self._cfg.dry_run),

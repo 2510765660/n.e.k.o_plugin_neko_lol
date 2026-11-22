@@ -77,7 +77,6 @@ _NO_TIME_KEYS: frozenset[str] = frozenset(
 )
 
 PRIORITIES: dict[str, int] = {
-    "post_game": 95,
     "game_end": 90,
     "ace": 80,
     "baron_kill": 70,
@@ -115,7 +114,6 @@ TIER_AMBIENT = 2
 
 _KEY_TIERS: dict[str, int] = {
     # 关键
-    "post_game": TIER_CRITICAL,
     "game_end": TIER_CRITICAL,
     "ace": TIER_CRITICAL,
     "baron_kill": TIER_CRITICAL,
@@ -666,10 +664,10 @@ def build_event_cue(
             body = f"{inhib}被拆了。"
 
     elif event_name == "GameEnd":
-        # 带一句结果。早先这里只说"这局结束了"，胜负留给 5 秒后的 post_game
-        # —— 但那样中间有 5 秒静默，听感上像卡住了。
-        # 现在这里说结果，post_game 那边只讲过程、不重复胜负（见
-        # build_post_game_cue 的 verdict_note）。
+        # GameEnd 这个 key 现在**不再单独产生 cue** —— 它一到就直接播
+        # build_post_game_cue 那条完整总结（见 __init__._emit_post_game）。
+        # 这里的分支只保留给"直接调用 build_event_cue"的场景（例如测试、
+        # 外部工具），保证它单独用也说得对。
         result = str(event.get("Result") or "").strip()
         label = RESULT_LABELS.get(result, "")
         body = f"这局结束了，{label}。" if label else "这局结束了。"
@@ -739,40 +737,51 @@ def build_post_game_cue(
     *,
     champion_names: dict[str, str] | None = None,
     result: str = "",
+    pending_items: list[str] | None = None,
 ) -> Cue:
-    """赛后总结。
+    """对局结束播报 —— 这是**唯一的**结束播报，内含完整总结。
 
     ``result`` 是 ``GameEnd`` 事件里的权威结果（``Win`` / ``Lose`` /
     ``Draw``）。有它就直说胜负；**没有就完全不说输赢** —— 击杀数领先
     不代表赢了（可能被偷家），猜错比不说更糟。
+
+    ``pending_items`` 是窗口里还没说出口的事件正文（推塔、兵营等）。
+    对局结束了，那些内容再等窗口就没机会说了，所以并进这条一起报。
     """
     names = champion_names or {}
     detail = _localize_names(state.post_game_text(result), names)
     if RESULT_LABELS.get(str(result or "").strip()):
-        # GameEnd 那条播报已经把胜负说过了（5 秒前）。这里不再重复，
-        # 让猫娘把篇幅留给过程和高光。
-        verdict_note = (
-            "胜负刚才已经说过了（结算结果为准），这里**不要再重复输赢**，"
-            "重点讲这一局的过程、数据和最值得记住的瞬间。"
-        )
+        # 这是唯一的结束播报，胜负由它来说 —— 不和别处重复，也不会漏。
+        verdict_note = "胜负以游戏给的结算结果为准，可以直接说。"
     else:
         verdict_note = (
             "注意：这局没收到游戏的结算结果，所以**不要说输赢**，"
             "也不要根据击杀数或比分推测胜负。只聊战绩和过程。"
         )
+
+    # 对局结束时窗口里还攒着的内容（最后几座塔、兵营）—— 再等就没机会了。
+    tail_items = [str(x).strip() for x in (pending_items or []) if str(x).strip()]
+    tail_block = ""
+    if tail_items:
+        tail_block = "对局结束前最后发生的事：" + chr(10) + "；".join(tail_items) + chr(10)
+
     text = (
-        f"（主人刚打完一局英雄联盟，这是最后记录到的战况：\n{detail}\n"
-        f"{verdict_note}"
+        "（主人刚打完一局英雄联盟，这是最后记录到的战况：" + chr(10)
+        + f"{detail}" + chr(10)
+        + f"{verdict_note}"
+        f"{tail_block}"
         f"{_speak_instruction('做个简短赛后总结，两到三句')}"
-        f"不要编造上面没写的数据。）"
+        "不要编造上面没写的数据。）"
     )
     verdict = RESULT_LABELS.get(str(result or "").strip(), "")
     summary = f"本局结束，时长 {state.game_time_label}"
     if verdict:
         summary += f"，{verdict}"
     return Cue(
-        key="post_game", text=text, priority=PRIORITIES["post_game"],
-        meta={"kind": "post_game", "result": str(result or "").strip()},
+        # 这条播报就是「对局结束」，用 game_end 这个 key —— post_game 不再是
+        # 独立事件，面板上也只留一个开关。
+        key="game_end", text=text, priority=PRIORITIES["game_end"],
+        meta={"kind": "game_end", "result": str(result or "").strip()},
         tier=TIER_CRITICAL,
         body=(
             f"{summary}，战绩 {state.me.kda}。"

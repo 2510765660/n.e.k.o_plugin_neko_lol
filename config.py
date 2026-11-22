@@ -16,7 +16,7 @@ from .live_client import DEFAULT_BASE_URL
 from .narrator import NarratorConfig
 
 # 默认全开。关掉某一项就完全不会为这类事件说话。
-# "summary" / "post_game" 也在内 —— 面板上要能关掉定期小结和赛后总结。
+# "summary" 也在内 —— 面板上要能关掉定期小结。
 DEFAULT_ANNOUNCE: dict[str, bool] = {
     "game_start": True,
     "game_end": True,
@@ -33,7 +33,6 @@ DEFAULT_ANNOUNCE: dict[str, bool] = {
     "turret_killed": True,
     "inhib_killed": True,
     "summary": True,
-    "post_game": True,
 }
 
 

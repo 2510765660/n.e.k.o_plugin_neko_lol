@@ -220,6 +220,19 @@ class Narrator:
         self._pending = []
         return self._drain(pending, moment)
 
+    def take_pending_bodies(self) -> list[str]:
+        """把窗口里攒着的正文取出来并清空窗口。
+
+        对局结束时用：那些推塔/兵营再等窗口就没机会说了，所以不打成独立
+        播报，而是并进"对局结束"那条一起报。
+        """
+        bodies = [
+            (p.cue.body or p.cue.text).strip().rstrip("。，, ！？!?、;；")
+            for p in self._pending
+        ]
+        self._pending = []
+        return [b for b in bodies if b]
+
     def _drain(self, pending: list["_Pending"], moment: float) -> int:
         """把攒下的一组 cue 发出去：可合并的拼一条，不可合并的各自单独发。"""
         mergeable = [p for p in pending if getattr(p.cue, "mergeable", True)]
