@@ -77,6 +77,9 @@ class Harness:
         # 需要验证真实 30 秒行为的用例会显式覆盖这个值。
         cfg = dict(raw_config or {})
         cfg.setdefault("window_seconds", 10.0)
+        # 会话测试靠"窗口到点结算"驱动播报；关掉搭车模式，否则环境档
+        # 会一直等别的播报来带走。搭车行为在 test_offline 里单独测。
+        cfg.setdefault("attach_ambient_to_events", False)
         self.raw_config = cfg
 
     def _push(self, **kwargs) -> dict:

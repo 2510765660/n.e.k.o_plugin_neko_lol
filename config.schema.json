@@ -188,6 +188,36 @@
           "default": 10.0,
           "minimum": 0
         },
+        "attach_ambient_to_events": {
+          "type": "boolean",
+          "title": "环境档搭车播报",
+          "x-title-i18n": {
+            "zh-CN": "环境档搭车播报",
+            "zh-TW": "环境档搭车播报",
+            "en": "环境档搭车播报"
+          },
+          "x-description-i18n": {
+            "zh-CN": "推塔/兵营/先锋不单独发，搭在下一条播报上一起说。一局播报条数能少一半，宿主队列不容易积压。关掉 = 窗口到点自己发。",
+            "zh-TW": "推塔/兵营/先锋不单独发，搭在下一条播报上一起说。一局播报条数能少一半，宿主队列不容易积压。关掉 = 窗口到点自己发。",
+            "en": "推塔/兵营/先锋不单独发，搭在下一条播报上一起说。一局播报条数能少一半，宿主队列不容易积压。关掉 = 窗口到点自己发。"
+          },
+          "default": true
+        },
+        "ambient_max_wait_seconds": {
+          "type": "number",
+          "title": "环境档兜底等待（秒）",
+          "x-title-i18n": {
+            "zh-CN": "环境档兜底等待（秒）",
+            "zh-TW": "环境档兜底等待（秒）",
+            "en": "环境档兜底等待（秒）"
+          },
+          "x-description-i18n": {
+            "zh-CN": "长时间没有别的播报时，环境档最多攒这么久就强制发一次，避免永远不说。",
+            "zh-TW": "长时间没有别的播报时，环境档最多攒这么久就强制发一次，避免永远不说。",
+            "en": "长时间没有别的播报时，环境档最多攒这么久就强制发一次，避免永远不说。"
+          },
+          "default": 60.0
+        },
         "normal_gap_seconds": {
           "type": "number",
           "title": "Minimum gap between normal announcements (seconds)",

@@ -67,6 +67,13 @@ class NarratorConfig:
     # 就顺延到窗口结束再说。
     user_chat_quiet_window: float = 0.0
 
+    # 环境档（推塔/兵营/先锋）不按倒计时自己吐，而是搭在下一条任何播报上
+    # 一起说。目的：一局播报条数从 ~37 压到 ~20，宿主队列不积压。
+    # 关掉则恢复"窗口到点自己发"。
+    attach_ambient_to_events: bool = True
+    # 兜底：没人说话时环境档最多攒这么久就强制发一次。
+    ambient_max_wait: float = 60.0
+
     # 事件开关
     announce: dict[str, bool] = field(default_factory=dict)
 
@@ -154,15 +161,15 @@ class Narrator:
             return self._buffer(cue, moment, reason="静默期")
 
         if force or tier <= 0:
-            # 关键档：**永远立刻**，不看任何间隔，也不碰窗口 ——
-            # 窗口有自己的倒计时，关键事件插进来不该把它提前吐出来。
+            # 关键档：**永远立刻**。窗口里攒着的内容会被 _emit 一并带走
+            # （见 _absorb_pending），所以关键事件插入时不会让窗口再干等。
             return self._emit(cue, moment, merged=0)
 
         if not getattr(cue, "mergeable", True):
-            # 不允许合并的 cue（定期小结）直接发。它说的是"此刻状态"，
-            # 攒进"刚才发生了这些事"列表会让模型把它当成一条事件来概括，
-            # 而且合并只保留 body，完整战况就丢了。
-            return self._emit(cue, moment, merged=0)
+            # 不允许合并的 cue（定期小结 / 里程碑）直接发，且**不动窗口**。
+            # 它们说的是"此刻状态"，既不该攒进窗口，也不该把窗口里的
+            # 事件卷进自己的提示语。
+            return self._emit(cue, moment, merged=0, absorb=False)
 
         if tier == 1 and moment - self._last_emit_at >= max(0.0, cfg.normal_gap):
             # 常规档且已经隔够了：立刻说。
@@ -206,6 +213,12 @@ class Narrator:
         # 用户正在聊天就顺延，等静默期过了再说，别抢话。
         if moment < self._quiet_until:
             return 0
+        # 环境档改为"搭车播报"：正常情况下不自己吐，等下一条播报把它带走。
+        # 但必须留个兜底 —— 否则长时间没人说话，塔/兵营就永远不说了。
+        if self.config.attach_ambient_to_events:
+            waited = moment - self._window_started_at
+            if waited < max(self.config.window_seconds, self.config.ambient_max_wait):
+                return 0
 
         pending = self._pending
         self._pending = []
@@ -375,8 +388,63 @@ class Narrator:
             body=f"{joined}。" if joined and not joined.endswith(("。", "）")) else joined,
         )
 
-    def _emit(self, cue: Cue, now: float, *, merged: int = 0) -> str:
+    def _absorb_pending(self, cue: Cue) -> Cue:
+        """把窗口里攒着的内容并进这一条，然后清空窗口。
+
+        两个目的：
+
+        * **关键档插入时不再让窗口干等 10 秒**。早先关键事件先播、窗口按
+          自己的倒计时走，于是"团灭之后 8 秒才冒出刚才那座塔"。现在关键
+          播报直接把窗口内容一起带走。
+        * **减少推送条数**。塔/兵营这类环境事件不必各发一条，并进最近一条
+          播报即可 —— 宿主侧队列压力小很多，整体出声也更快。
+        """
+        # 只吸收**可合并**的内容。摘要/里程碑这类 mergeable=False 的
+        # cue 是"状态总结"，被并进"另外，…"会语义错乱，所以留在窗口里
+        # 等它自己的投递路径。
+        keep = [p for p in self._pending if not getattr(p.cue, "mergeable", True)]
+        absorb = [p for p in self._pending if getattr(p.cue, "mergeable", True)]
+        self._pending = keep
+        pending = absorb
+        seen: set[str] = set()
+        bodies: list[str] = []
+        for item in pending:
+            body = (item.cue.body or item.cue.text).strip().rstrip("。，, ！？!?、;；")
+            if body and body not in seen:
+                seen.add(body)
+                bodies.append(body)
+        if not bodies:
+            return cue
+
+        limit = max(1, self.config.merge_max_items)
+        listed = bodies[:limit]
+        tail = "；".join(listed)
+        if len(bodies) > len(listed):
+            tail += f"；等共 {len(bodies)} 条"
+        note = f"另外，{tail}。"
+
+        # 正文跟着变（日志、播报记录读的是 body）
+        cue.body = f"{cue.body}{note}" if cue.body else note
+        # 提示语里插在收尾指令之前
+        marker = "用你自己的口吻"
+        if marker in cue.text:
+            head, sep, rest = cue.text.partition(marker)
+            cue.text = f"{head}{note}{sep}{rest}"
+        else:
+            cue.text = f"{cue.text}{note}"
+        self._log(f"[窗口] 并入当前播报（{len(bodies)} 条）")
+        return cue
+
+    def _emit(
+        self, cue: Cue, now: float, *, merged: int = 0, absorb: bool = True
+    ) -> str:
         cfg = self.config
+        # 关键档播报会顺手把窗口里攒着的内容并进来（absorb=True）。
+        # 其它直发路径（小结、里程碑这类 mergeable=False 的"状态总结"）
+        # 传 absorb=False —— 它们和"刚才发生了这些事"不是一回事，
+        # 不该把事件列表卷进自己的提示语里。
+        if absorb and merged == 0 and self._pending:
+            cue = self._absorb_pending(cue)
         if cfg.dry_run:
             self._last_emit_at = now
             self._log(f"[干跑] 本该播报（{cue.key}，{merged or 1} 条合并）：{cue.text[:120]}")

@@ -1741,6 +1741,10 @@ class TestNarrator(unittest.TestCase):
 
     def _narrator(self, sent: list, **overrides) -> narrator.Narrator:
         cfg = narrator.NarratorConfig()
+        # 这些用例测的是**窗口本身**（开窗、倒计时、合并、折叠），
+        # 所以关掉"环境档搭车播报"——那一档会让窗口等别的播报来带走，
+        # 到点不吐。搭车行为另有专门用例覆盖。
+        cfg.attach_ambient_to_events = False
         for key, value in overrides.items():
             setattr(cfg, key, value)
         return narrator.Narrator(
@@ -2063,11 +2067,13 @@ class TestNarrator(unittest.TestCase):
             )
             self.assertEqual(sent, [])
 
-    def test_critical_does_not_flush_the_window(self):
-        """关键档播报**不能**把窗口里攒着的提前吐出来。
+    def test_critical_carries_pending_out_immediately(self):
+        """关键档播报会把窗口里攒着的**一起带走**。
 
-        窗口有自己的倒计时。关键事件插进来不该把它打断 ——
-        实测过"一条击杀把刚攒的两条龙提前播了"的问题。
+        早先的规则是"关键事件不碰窗口，窗口按自己的倒计时走"。代价是
+        窗口里的击杀可能还要干等 10 秒才出声，而中途插进来的团灭早说完了
+        —— 实测 2026-11-22 有 7 次这种"击杀被压在窗口里"。
+        现在关键档直接把内容并进来一次发完，既不延迟也不丢。
         """
         sent: list = []
         n = self._narrator(sent, window_seconds=30)
@@ -2076,14 +2082,62 @@ class TestNarrator(unittest.TestCase):
             self._cue("ace", body="立刻的团灭", tier=cues.TIER_CRITICAL),
             now=1005.0,
         )
-        self.assertEqual(len(sent), 1, f"窗口被提前吐出来了：{sent}")
+        self.assertEqual(len(sent), 1, f"应当只发一条合并播报：{sent}")
         self.assertIn("立刻的团灭", sent[0])
-        self.assertEqual(n.queue_depth, 1, "窗口里的内容不该被动过")
+        self.assertIn("攒着的塔", sent[0], "窗口内容没被带走")
+        self.assertEqual(n.queue_depth, 0, "窗口应当已结算")
 
-        # 窗口照常按自己的倒计时结算
-        n.flush(now=1030.0)
-        self.assertEqual(len(sent), 2)
-        self.assertIn("攒着的塔", sent[1])
+    def test_summary_does_not_steal_the_window(self):
+        """mergeable=False 的直发播报不能把窗口里的事件卷走。"""
+        sent: list = []
+        n = self._narrator(sent, window_seconds=30)
+        n.submit(self._cue("champion_kill", body="击杀了对面的 X"), now=1000.0)
+        summary = cues.Cue(
+            key="summary", text="（当前战况）", body="当前战况：一行比分",
+            tier=cues.TIER_AMBIENT, mergeable=False,
+        )
+        n.submit(summary, now=1001.0)
+        self.assertNotIn("击杀了对面的 X", sent[0],
+                         "小结把窗口里的事件卷进来了")
+        self.assertEqual(n.queue_depth, 1, "小结不该动窗口")
+
+    def test_ambient_waits_for_a_ride_by_default(self):
+        """默认（搭车模式）下环境档不按倒计时自己吐，等别的播报带走。
+
+        目的：推塔/兵营不单独占一条推送。一局播报从 ~37 条压到 ~20 条，
+        宿主队列不积压。
+        """
+        sent: list = []
+        n = self._narrator(sent, window_seconds=10, attach_ambient_to_events=True)
+        n.submit(self._cue("turret_killed", body="推塔"), now=1000.0)
+        # 过了窗口倒计时也不发 —— 在等搭车
+        n.flush(now=1015.0)
+        self.assertEqual(sent, [], "环境档按倒计时自己吐了")
+        self.assertEqual(n.queue_depth, 1)
+
+        # 来一条**直发**的播报（关键档），把塔一起带走
+        n.submit(
+            self._cue("ace", body="团灭了对面", tier=cues.TIER_CRITICAL),
+            now=1020.0,
+        )
+        self.assertEqual(len(sent), 1, f"没搭上车：{sent}")
+        self.assertIn("推塔", sent[0], "塔没被带走")
+        self.assertIn("团灭了对面", sent[0])
+        self.assertEqual(n.queue_depth, 0)
+
+    def test_ambient_falls_back_after_max_wait(self):
+        """长时间没有别的播报时，环境档不能永远不说。"""
+        sent: list = []
+        n = self._narrator(
+            sent, window_seconds=10, attach_ambient_to_events=True,
+            ambient_max_wait=30.0,
+        )
+        n.submit(self._cue("turret_killed", body="推塔"), now=1000.0)
+        n.flush(now=1025.0)
+        self.assertEqual(sent, [], "还没到兜底上限")
+        n.flush(now=1031.0)
+        self.assertEqual(len(sent), 1, "兜底没生效")
+        self.assertIn("推塔", sent[0])
 
     def test_tier_is_read_from_the_cue(self):
         """档位是 cue 自带的，同一个 key 可以按情况给不同档。"""

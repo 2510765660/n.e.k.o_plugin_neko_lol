@@ -108,6 +108,8 @@ SCALAR_KEYS: frozenset[str] = frozenset(
         "merge_max_items",
         "stats_cooldown_seconds",
         "show_prompt_in_chat",
+        "attach_ambient_to_events",
+        "ambient_max_wait_seconds",
         "normal_gap_seconds",
         "only_my_events",
         "infer_lane_positions",
@@ -188,6 +190,18 @@ class PluginConfig:
     # 关掉（默认）时 visibility=[]：模型照样读到并带语音回应，只是聊天里
     # 看不到那一大段括号提示。开着适合调试——能直接看到模型收到了什么。
     show_prompt_in_chat: bool = False
+    # 环境档（推塔/兵营/先锋）不单独发，改为**搭在别的播报上**一起说。
+    #
+    # 打开（默认）：这些事件进窗口后不会按 10 秒倒计时自己吐出来，
+    #   而是等下一条任何播报（击杀/小龙/团灭…）时顺带带走。
+    #   目的：一局 37 条压到 20 条左右，宿主队列不积压，整体出声更快。
+    # 关闭：恢复旧行为，窗口到点自己发。
+    #
+    # 注意：如果一局里长时间没有别的播报（比如纯推塔期），这些内容会
+    # 一直攒着 —— 所以窗口仍有一个兜底上限（见 ambient_max_wait_seconds）。
+    attach_ambient_to_events: bool = True
+    # 兜底：环境档最多攒这么久就强制发一次，避免"没人说话就永远不说"。
+    ambient_max_wait: float = 60.0
     # 常规档两条播报之间的最小间隔（秒）。间隔不够的会进窗口合并，不丢。
     normal_gap: float = 3.0
     # 用户正在聊天时不主动插话（秒）。0 = 不理会，照常说。
@@ -286,6 +300,12 @@ class PluginConfig:
             merge_max_items=max(1, _int(raw.get("merge_max_items"), 6)),
             stats_cooldown=max(0.0, _float(raw.get("stats_cooldown_seconds"), 60.0)),
             show_prompt_in_chat=_bool(raw.get("show_prompt_in_chat"), False),
+            attach_ambient_to_events=_bool(
+                raw.get("attach_ambient_to_events"), True
+            ),
+            ambient_max_wait=max(
+                5.0, _float(raw.get("ambient_max_wait_seconds"), 60.0)
+            ),
             normal_gap=max(0.0, _float(raw.get("normal_gap_seconds"), 3.0)),
             user_chat_quiet_window=max(
                 0.0, _float(raw.get("user_chat_quiet_window_seconds"), 0.0)
@@ -329,5 +349,7 @@ class PluginConfig:
             merge_max_items=self.merge_max_items,
             normal_gap=self.normal_gap,
             user_chat_quiet_window=self.user_chat_quiet_window,
+            attach_ambient_to_events=self.attach_ambient_to_events,
+            ambient_max_wait=self.ambient_max_wait,
             announce=dict(self.announce),
         )
