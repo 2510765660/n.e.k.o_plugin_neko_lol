@@ -1063,7 +1063,18 @@ class NekoLolPlugin(NekoPluginBase):
         判定用的是**对局时间**（人头按 GameTime 排序稳定），冷却用墙钟
         （避免时间倒流/暂停时误判）。
         """
-        window = self._cfg.summary_burst_window
+        # 窗口和门槛都按地图取：峡谷 5 人 / 60 秒、大乱斗 5 人 / 30 秒。
+        # 大乱斗节奏快，同样 5 个人头挤在更短时间里；冷却也给得更长，
+        # 免得连续团战刷屏。
+        if state.is_aram:
+            window = self._cfg.aram_burst_window
+            need = self._cfg.aram_burst_kills
+            cooldown = self._cfg.aram_burst_cooldown
+        else:
+            window = self._cfg.summary_burst_window
+            need = self._cfg.summary_burst_kills
+            cooldown = self._cfg.summary_burst_cooldown
+
         moment = state.game_time
         self._kill_times.append(moment)
         # 只留窗口内的
@@ -1072,14 +1083,6 @@ class NekoLolPlugin(NekoPluginBase):
 
         if moment < self._cfg.summary_burst_after:
             return          # 前 15 分钟不启用（用户 2026-11-17 指定）
-        # 大乱斗 5 人/30 秒是常态，用它那套（默认 8 人 / 120 秒冷却）会
-        # 整局刷十几条小结；这里按地图取不同的门槛。
-        if state.is_aram:
-            need = self._cfg.aram_burst_kills
-            cooldown = self._cfg.aram_burst_cooldown
-        else:
-            need = self._cfg.summary_burst_kills
-            cooldown = self._cfg.summary_burst_cooldown
         if len(self._kill_times) < need:
             return
         if now - self._last_burst_summary_at < cooldown:
@@ -1110,52 +1113,44 @@ class NekoLolPlugin(NekoPluginBase):
         )
         self._log(
             f"[小结] 对局 {state.game_time_label} 爆发触发"
-            f"（{self._cfg.summary_burst_window:.0f} 秒内 {need} 个人头）"
+            f"（{(self._cfg.aram_burst_window if state.is_aram else self._cfg.summary_burst_window):.0f} 秒内 {need} 个人头）"
         )
         cue = build_summary_cue(state, champion_names=self._champion_names)
         self._record_recent(state, cue)
         self._narrator.submit(cue, now)
 
     def _maybe_summary(self, state: MatchState, now: float) -> None:
-        """定期小结：对局第 15 分钟首播，之后每 5 分钟一次。
+        """定期小结：**每局只播一次**，落在固定的对局时刻。
+
+        峡谷第 15 分钟、大乱斗第 8 分钟各一次，之后不再定时重复 ——
+        常规战况改由"爆发小结"（打赢一波团时补一条，见
+        _note_kill_for_burst）覆盖，比按钟点念更贴合场面。
 
         调度基准是**对局时间**而不是墙钟 —— 暂停/断流后接上时，播报点
-        仍然落在 15:00、20:00、25:00 这些整洁的刻度上。
-        另有一条独立的"爆发小结"（见 _note_kill_for_burst）。
+        仍然落在 15:00 / 8:00 这种整洁的刻度上。
         """
-        # 大乱斗系（嚎哭深渊 map 12）节奏快得多：第 8 分钟首播、每 3 分钟一次。
-        # 海克斯大乱斗等变种也在这张地图上，靠 mapNumber 一并覆盖。
         if state.is_aram:
-            interval = self._cfg.aram_summary_interval
             first_at = self._cfg.aram_summary_first_at
         else:
-            interval = self._cfg.summary_interval
             first_at = self._cfg.summary_first_at
-        if interval <= 0:
+        if first_at <= 0:
             return
         if state.game_time < first_at:
             return
-
-        # 下一次该播的对局时刻：首播点 + N×间隔。
-        due = first_at
+        # 已经播过就再也不播（_last_summary_game_time > 0 即视为播过）。
         if self._last_summary_game_time > 0:
-            due = self._last_summary_game_time + interval
-        if state.game_time + 1e-6 < due:
             return
 
         self._last_summary_game_time = state.game_time
         self._last_summary_at = now
-        # 定时小结也要占住爆发小结的冷却位，否则第 15 分钟那一刻会出现
-        # "定时小结刚播完 4 秒，爆发小结又来一条"。
+        # 定时小结也要占住爆发小结的冷却位，否则同一时刻会出现
+        # "定时小结刚播完，爆发小结又来一条"。
         self._last_burst_summary_at = now
         cue = build_summary_cue(state, champion_names=self._champion_names)
         self._record_recent(state, cue)
         # 日志写在 submit **之前**：小结现在是不可合并档、在 submit 里直接
         # 发，先 submit 会看到"已发送"排在"[小结] 播报"前面，读日志时顺序反了。
-        self._log(
-            f"[小结] 对局 {state.game_time_label} 播报"
-            f"（下次约 {int(due + interval) // 60} 分钟）"
-        )
+        self._log(f"[小结] 对局 {state.game_time_label} 播报（本局仅此一次）")
         self._narrator.submit(cue, now)
 
     # ── 播报 ────────────────────────────────────────────────────

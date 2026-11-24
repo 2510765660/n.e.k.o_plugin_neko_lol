@@ -97,6 +97,7 @@ SCALAR_KEYS: frozenset[str] = frozenset(
         "aram_kills_ambient",
         "aram_death_only_notable",
         "aram_burst_kills",
+        "aram_burst_window_seconds",
         "aram_burst_cooldown_seconds",
         "summary_burst_after_seconds",
         "summary_burst_kills",
@@ -161,8 +162,10 @@ class PluginConfig:
     # 死亡只播有信息量的：连杀 ≥3 被断，或短时间连续阵亡 ≥2 次。
     # 大乱斗里"死一次"本身完全不值得报。
     aram_death_only_notable: bool = True
-    # 爆发小结在大乱斗收紧：5 人/30 秒在那里是常态，会每分钟触发一次。
-    aram_burst_kills: int = 8
+    # 大乱斗人头密度高，窗口只有 30 秒（峡谷是 60 秒）；门槛同为 5 人。
+    # 冷却也比峡谷长，避免连续团战刷屏。
+    aram_burst_kills: int = 5
+    aram_burst_window: float = 30.0
     aram_burst_cooldown: float = 120.0
     # 爆发小结：短时间大量人头时额外播一次（2026-11-17 用户指定）。
     # 只在 summary_burst_after 之后启用；窗口内人头数达标就触发；两次之间
@@ -171,7 +174,7 @@ class PluginConfig:
     # 同一拍里若出现团灭，本条会被跳过（团灭已经说了这一波）。
     summary_burst_after: float = 900.0
     summary_burst_kills: int = 5
-    summary_burst_window: float = 30.0
+    summary_burst_window: float = 60.0
     summary_burst_cooldown: float = 60.0
 
     # ── 播报窗口（唯一的节流参数）────────────────────────────────
@@ -280,7 +283,10 @@ class PluginConfig:
             ),
             aram_kills_ambient=_bool(raw.get("aram_kills_ambient"), True),
             aram_death_only_notable=_bool(raw.get("aram_death_only_notable"), True),
-            aram_burst_kills=max(1, _int(raw.get("aram_burst_kills"), 8)),
+            aram_burst_kills=max(1, _int(raw.get("aram_burst_kills"), 5)),
+            aram_burst_window=max(
+                1.0, _float(raw.get("aram_burst_window_seconds"), 30.0)
+            ),
             aram_burst_cooldown=max(
                 0.0, _float(raw.get("aram_burst_cooldown_seconds"), 120.0)
             ),
@@ -291,7 +297,7 @@ class PluginConfig:
                 1, _int(raw.get("summary_burst_kills"), 5)
             ),
             summary_burst_window=max(
-                1.0, _float(raw.get("summary_burst_window_seconds"), 30.0)
+                1.0, _float(raw.get("summary_burst_window_seconds"), 60.0)
             ),
             summary_burst_cooldown=max(
                 0.0, _float(raw.get("summary_burst_cooldown_seconds"), 60.0)

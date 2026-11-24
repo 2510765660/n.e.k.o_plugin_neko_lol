@@ -399,11 +399,26 @@
             "en": "大乱斗爆发小结人头数"
           },
           "x-description-i18n": {
-            "zh-CN": "大乱斗爆发小结的门槛。5 人/30 秒在大乱斗是常态，默认提到 8 人。",
-            "zh-TW": "大乱斗爆发小结的门槛。5 人/30 秒在大乱斗是常态，默认提到 8 人。",
-            "en": "大乱斗爆发小结的门槛。5 人/30 秒在大乱斗是常态，默认提到 8 人。"
+            "zh-CN": "大乱斗爆发小结的门槛。5 人/30 秒在大乱斗是常态，默认提到 5 人。",
+            "zh-TW": "大乱斗爆发小结的门槛。5 人/30 秒在大乱斗是常态，默认提到 5 人。",
+            "en": "大乱斗爆发小结的门槛。5 人/30 秒在大乱斗是常态，默认提到 5 人。"
           },
-          "default": 8
+          "default": 5
+        },
+        "aram_burst_window_seconds": {
+          "type": "number",
+          "title": "大乱斗爆发小结窗口（秒）",
+          "x-title-i18n": {
+            "zh-CN": "大乱斗爆发小结窗口（秒）",
+            "zh-TW": "大亂鬥爆發小結視窗（秒）",
+            "en": "ARAM burst window (seconds)"
+          },
+          "x-description-i18n": {
+            "zh-CN": "大乱斗统计多少人头的滑动窗口。默认 30 秒（峡谷是 60 秒）。",
+            "zh-TW": "大亂鬥統計多少人頭的滑動視窗。預設 30 秒。",
+            "en": "ARAM kill-count window. Default 30s (Summoner’s Rift is 60s)."
+          },
+          "default": 30.0
         },
         "aram_burst_cooldown_seconds": {
           "type": "number",
@@ -459,11 +474,11 @@
             "en": "爆发小结窗口（秒）"
           },
           "x-description-i18n": {
-            "zh-CN": "统计多少人头的滑动窗口长度。默认 30 秒。",
-            "zh-TW": "统计多少人头的滑动窗口长度。默认 30 秒。",
-            "en": "Sliding window (seconds) for counting kills. Default 30."
+            "zh-CN": "统计多少人头的滑动窗口长度。默认 60 秒。",
+            "zh-TW": "统计多少人头的滑动窗口长度。默认 60 秒。",
+            "en": "Sliding window (seconds) for counting kills. Default 60."
           },
-          "default": 30.0
+          "default": 60.0
         },
         "summary_burst_cooldown_seconds": {
           "type": "number",

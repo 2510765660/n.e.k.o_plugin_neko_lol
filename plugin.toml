@@ -75,12 +75,14 @@ poll_interval_seconds = 2.0
 # 不在对局时的轮询间隔。局外每次探测都要白跑 https+http 两次失败，
 # 所以降频。进游戏有加载画面兜底，晚发现几秒无感。
 idle_poll_interval_seconds = 5.0
-# 定期战况小结的间隔。0 表示关闭定期小结，只播报关键事件。
-summary_interval_seconds = 300.0
-# 对局开始多久之后才开始定期小结（避免刚进游戏就报一次"0/0/0"）。
+# 定期小结**每局只播一次**，落在固定的对局时刻：
+#   峡谷第 15 分钟、大乱斗第 8 分钟。设为 0 表示关闭。
+# 之后的战况改由"爆发小结"负责（打赢一波团时补一条，见下面）。
 summary_first_at_seconds = 900.0
-# 嚎哭深渊系（大乱斗 / 海克斯大乱斗）：局短、节奏快，单独一套节奏。
-# 第 5 分钟首播，之后每 3 分钟一次。
+# 保留字段：现在不再按间隔重复播报，改由爆发小结覆盖。
+# 设为 0 也会关闭定期小结。
+summary_interval_seconds = 300.0
+# 嚎哭深渊系（大乱斗 / 海克斯大乱斗）：局短、节奏快，首播更早。
 aram_summary_first_at_seconds = 480.0
 aram_summary_interval_seconds = 180.0
 
@@ -91,8 +93,9 @@ aram_kills_ambient = true
 # 死亡只播有信息量的：连杀 ≥3 被断，或 20 秒内连着倒下两次。
 # 大乱斗里"死一次"本身完全不值得报。
 aram_death_only_notable = true
-# 爆发小结在大乱斗收紧：8 人 / 120 秒（峡谷是 5 人 / 60 秒）。
-aram_burst_kills = 8
+# 大乱斗爆发小结：5 人 / 30 秒（峡谷是 5 人 / 60 秒），冷却 120 秒。
+aram_burst_kills = 5
+aram_burst_window_seconds = 30.0
 aram_burst_cooldown_seconds = 120.0
 
 # ── 爆发小结 ──────────────────────────────────────────────────────
@@ -102,7 +105,7 @@ aram_burst_cooldown_seconds = 120.0
 # 触发时如果同一拍有团灭，则跳过（团灭已经把这一波说清楚了）。
 summary_burst_after_seconds = 900.0
 summary_burst_kills = 5
-summary_burst_window_seconds = 30.0
+summary_burst_window_seconds = 60.0
 summary_burst_cooldown_seconds = 60.0
 # 插件中途启动/重载时，如果对局已进行超过这个秒数，就只从当前进度开始
 # 播报、不回放已经发生的事件。调小会让"重载后重播半局"，调大会让

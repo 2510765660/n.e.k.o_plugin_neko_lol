@@ -451,7 +451,7 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertIn("这是当前战况", h.texts)
 
     async def test_summary_can_be_disabled(self):
-        h = await self._harness({"summary_interval_seconds": 0})
+        h = await self._harness({"summary_first_at_seconds": 0})
         _start_fresh_game(h)
         await h.poll(times=1)
         h.client.data = fixtures.make_all_game_data(game_time=1000.0)
@@ -1130,8 +1130,8 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(deaths), 1, f"连死 5 次播了 {len(deaths)} 条：{deaths}")
         self.assertIn("连着倒了两次", deaths[0])
 
-    async def test_aram_burst_needs_eight_kills(self):
-        """大乱斗爆发小结门槛 8 人（峡谷是 5 人）。"""
+    async def test_aram_burst_needs_five_kills_in_thirty_seconds(self):
+        """大乱斗爆发小结：5 人 / 30 秒（峡谷是 5 人 / 60 秒）。"""
         async def fired(n: int) -> bool:
             h = await self._harness({"window_seconds": 5})
             _start_fresh_game(h)
@@ -1157,8 +1157,8 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
             await h.poll(times=5, dt=1.0)
             return any("这是当前战况" in p["parts"][0]["text"] for p in h.pushed[base:])
 
-        self.assertFalse(await fired(5), "5 杀就触发了，门槛没生效")
-        self.assertTrue(await fired(8), "8 杀没触发")
+        self.assertFalse(await fired(4), "4 杀就触发了，门槛没生效")
+        self.assertTrue(await fired(5), "5 杀没触发")
 
     async def test_roster_is_captured_at_game_start(self):
         """开局记下双方阵容；排位带分路后缀，非排位不带。"""
@@ -1260,8 +1260,8 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
             f"团灭和小结撞车了：{h.texts}",
         )
 
-    async def test_burst_window_is_thirty_seconds(self):
-        """窗口 30 秒：跨度 24 秒的 5 个头发作，跨度 32 秒的不算。"""
+    async def test_burst_window_is_sixty_seconds_in_sr(self):
+        """峡谷窗口 60 秒：跨度 48 秒的 5 个头触发，跨度 64 秒的不算。"""
         async def fired(spacing: float) -> bool:
             h = await self._harness({"window_seconds": 5})
             _start_fresh_game(h)
@@ -1289,8 +1289,8 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
                 "这是当前战况" in p["parts"][0]["text"] for p in h.pushed[base:]
             )
 
-        self.assertTrue(await fired(6.0), "24 秒内 5 个头的波没触发")
-        self.assertFalse(await fired(8.0), "跨度 32 秒超过了 30 秒窗口却触发")
+        self.assertTrue(await fired(12.0), "48 秒内 5 个头的波没触发")
+        self.assertFalse(await fired(16.0), "跨度 64 秒超过了 60 秒窗口却触发")
 
     async def test_burst_summary_has_cooldown(self):
         """两次爆发小结之间至少隔冷却时间（默认 60 秒）。"""
@@ -1320,11 +1320,11 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
                 self.assertGreaterEqual(first, 1, f"第一波没触发：{h.texts}")
         self.assertEqual(summaries(), first, "冷却期里又播了小结")
 
-    async def test_summary_schedule_uses_game_time(self):
-        """小结在对局第 15 分钟首播，之后每 5 分钟一次。
+    async def test_summary_fires_once_at_fixed_time(self):
+        """定期小结**每局只播一次**，固定在对手第 15 分钟。
 
         调度基准是**对局时间**不是墙钟：暂停、断流、重连都不该让播报点
-        漂移。
+        漂移。之后的战况由爆发小结（打赢一波团时补一条）负责。
         """
         h = await self._harness({"window_seconds": 5})
         _start_fresh_game(h)
@@ -1348,17 +1348,12 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         await h.settle()
         self.assertEqual(summaries(), 1, f"15 分钟没播：{h.texts}")
 
-        # 19:59 → 距首播还不到 5 分钟，不该再播
-        h.client.data = fixtures.make_all_game_data(game_time=1199)
-        await h.poll(times=3, dt=2.0)
-        await h.settle()
-        self.assertEqual(summaries(), 1, "没到 20 分钟又播了")
-
-        # 20:01 → 第二次
-        h.client.data = fixtures.make_all_game_data(game_time=1201)
-        await h.poll(times=3, dt=2.0)
-        await h.settle()
-        self.assertEqual(summaries(), 2, f"20 分钟没播：{h.texts}")
+        # 20:01 / 25:01 / 30:01 → 都不该再播（每局只此一次）
+        for gt in (1201, 1501, 1801):
+            h.client.data = fixtures.make_all_game_data(game_time=gt)
+            await h.poll(times=3, dt=2.0)
+            await h.settle()
+            self.assertEqual(summaries(), 1, f"{gt//60} 分钟又播了一次：{h.texts}")
 
     async def test_elder_dragon_not_counted_toward_soul(self):
         """远古巨龙不计入龙魂计数。
@@ -1439,8 +1434,8 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("输了", texts, f"猜了胜负：{texts}")
         self.assertIn("不要说输赢", texts, f"没有禁止模型猜：{texts}")
 
-    async def test_aram_summary_cadence(self):
-        """大乱斗系列小结：第 8 分钟首播，之后每 3 分钟一次。
+    async def test_aram_summary_fires_once_at_eight_minutes(self):
+        """大乱斗定期小结：第 8 分钟播一次，之后不再定时重复。
 
         海克斯大乱斗等变种也走这套 —— 它们都在嚎哭深渊（map 12）上。
         """
@@ -1473,17 +1468,12 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         await h.settle()
         self.assertEqual(summaries(), 1, f"8 分钟没播：{h.texts}")
 
-        # 10:59 还不到 11 分钟（8+3）
-        h.client.data = aram(659)
-        await h.poll(times=3, dt=2.0)
-        await h.settle()
-        self.assertEqual(summaries(), 1, "没到 11 分钟又播了")
-
-        # 11:01 第二次
-        h.client.data = aram(661)
-        await h.poll(times=3, dt=2.0)
-        await h.settle()
-        self.assertEqual(summaries(), 2, f"11 分钟没播：{h.texts}")
+        # 11:01 / 14:01 / 17:01 → 都不该再播（每局只此一次）
+        for gt in (661, 841, 1021):
+            h.client.data = aram(gt)
+            await h.poll(times=3, dt=2.0)
+            await h.settle()
+            self.assertEqual(summaries(), 1, f"{gt//60} 分钟又播了一次")
 
     async def test_game_end_flushes_pending_window(self):
         """GameEnd 一到就结算窗口 —— 对局结束了，攒着的推塔再不说是没机会了。"""
