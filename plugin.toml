@@ -5,7 +5,7 @@ type = "plugin"
 description = "把英雄联盟的对局事件和实时战绩喂给猫娘：局内关键事件播报、定期战况小结、赛后总结，并且可以在聊天里直接问当前战况。只读官方 Live Client Data API（127.0.0.1:2999），不读游戏内存、不注入、不发送任何操作指令。"
 short_description = "LOL 陪玩：局内事件播报 + 实时战绩问答，只读官方本地 API。"
 keywords = ["lol", "league of legends", "英雄联盟", "陪玩", "companion", "战绩", "对局", "live client data"]
-version = "0.1.3"
+version = "0.1.4"
 entry = "plugin.plugins.neko_lol:NekoLolPlugin"
 
 [plugin.author]
