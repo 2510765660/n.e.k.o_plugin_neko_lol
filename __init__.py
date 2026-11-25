@@ -39,6 +39,7 @@ from .cues import (
     Cue,
     MyMultikill,
     OthersMultikill,
+    _is_nexus_turret,
     _normalize_body,
     _parse_structure,
     _side_from_team_tag,
@@ -644,7 +645,18 @@ class NekoLolPlugin(NekoPluginBase):
             elif name in ("TurretKilled", "InhibKilled"):
                 self._note_structure_if_unparsed(event, name, state)
                 if name == "TurretKilled":
+                    # 门牙塔不播报（2026-11-26 用户指定）—— 它守在基地门口，
+                    # 到这个阶段基本是收尾，说一句"门牙塔掉了"没什么信息量。
+                    #
+                    # 仍然计数：赛后总结靠塔数解释"人头落后但塔数占优"，
+                    # 少算两座门牙塔会让这句判断出错。
                     self._count_turret(event, state)
+                    if _is_nexus_turret(event.get("TurretKilled")):
+                        if is_announced("turret_killed", self._cfg.announce):
+                            self._log(
+                                f"[塔] 门牙塔，不播报（{event.get('TurretKilled')!r}）"
+                            )
+                        return
                 self._handle_plain_event(event, state, now)
             elif name == "GameEnd":
                 self._record_game_result(event)

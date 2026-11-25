@@ -1160,6 +1160,39 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await fired(4), "4 杀就触发了，门槛没生效")
         self.assertTrue(await fired(5), "5 杀没触发")
 
+    async def test_nexus_turret_is_not_broadcast_but_still_counted(self):
+        """门牙塔不播报，但**仍然计数** —— 赛后总结要靠塔数解释局面。"""
+        h = await self._harness({
+            "window_seconds": 5,
+            "attach_ambient_to_events": False,
+        })
+        _start_fresh_game(h)
+        await h.poll(times=1)
+        await h.settle()
+        base = len(h.pushed)
+
+        # 一座外塔 + 两座门牙塔
+        for eid, field in enumerate(
+            ("Turret_TChaos_L1_P3_1", "Turret_TChaos_L1_P5_1", "Turret_TChaos_L1_P4_1"), 1
+        ):
+            h.client.events.append(
+                fixtures.simple_event(eid, "TurretKilled", KillerName="我",
+                                      TurretKilled=field)
+            )
+            h.client.data = fixtures.make_all_game_data(game_time=200 + eid * 10)
+            await h.poll(times=4, dt=2.0)
+            await h.settle()
+
+        texts = [p["parts"][0]["text"] for p in h.pushed[base:]]
+        self.assertFalse(
+            any("门牙" in t for t in texts), f"门牙塔被播报了：{texts}"
+        )
+        # 外塔照常播
+        self.assertTrue(any("外塔" in t for t in texts), texts)
+        # 但三座塔都要计数（赛后总结要用）
+        self.assertEqual(h.plugin._turret_counts["enemy"], 3,
+                         f"塔数没算全：{h.plugin._turret_counts}")
+
     async def test_roster_is_captured_at_game_start(self):
         """开局记下双方阵容；排位带分路后缀，非排位不带。"""
         h = await self._harness({"window_seconds": 1})

@@ -873,6 +873,29 @@ class TestCues(unittest.TestCase):
             cue = cues.build_event_cue(event, self.state)
             self.assertNotIn("补刀", cue.text, f"{event['EventName']} 仍带补刀")
 
+    def test_nexus_turret_is_detected_in_both_formats(self):
+        """门牙塔识别：国服 P5/P4，国际服 05/04。"""
+        for raw in (
+            "Turret_TChaos_L1_P5_3625540808",   # 国服实测格式
+            "Turret_TChaos_L1_P4_3675873665",
+            "Turret_T2_C_05_A",                 # 国际服
+            "Turret_T2_C_04_A",
+        ):
+            self.assertTrue(cues._is_nexus_turret(raw), raw)
+
+        for raw in (
+            "Turret_TOrder_L2_P3_1509986696",   # 外塔
+            "Turret_TChaos_L1_P1_2220646803",   # 高地塔
+            "Turret_T2_C_03_A",
+            "Turret_T2_C_01_A",
+        ):
+            self.assertFalse(cues._is_nexus_turret(raw), raw)
+
+    def test_nexus_turret_label_has_no_lane(self):
+        """门牙塔不属于任何路，标签里不该带路名。"""
+        for raw in ("Turret_TChaos_L1_P5_1", "Turret_T2_C_05_A"):
+            self.assertEqual(cues._turret_label(raw), "门牙塔", raw)
+
     def test_cs_data_is_still_available(self):
         """播报不说，但数据不能丢 —— LLM 工具要能查到补刀。"""
         self.assertEqual(self.state.me.cs, 120)
