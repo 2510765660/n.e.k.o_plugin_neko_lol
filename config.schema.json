@@ -589,6 +589,36 @@
           "default": 20.0,
           "minimum": 0
         },
+        "game_end_wait_seconds": {
+          "type": "number",
+          "title": "等 GameEnd 的宽限期（秒）",
+          "x-title-i18n": {
+            "zh-CN": "等 GameEnd 的宽限期（秒）",
+            "zh-TW": "等 GameEnd 的宽限期（秒）",
+            "en": "等 GameEnd 的宽限期（秒）"
+          },
+          "x-description-i18n": {
+            "zh-CN": "数据消失后额外等这么久收集 GameEnd。接口在结算瞬间会短暂断流，GameEnd 有时晚几秒才到；超时才判定真的没收到（播报里就不提输赢）。",
+            "zh-TW": "数据消失后额外等这么久收集 GameEnd。接口在结算瞬间会短暂断流，GameEnd 有时晚几秒才到；超时才判定真的没收到（播报里就不提输赢）。",
+            "en": "数据消失后额外等这么久收集 GameEnd。接口在结算瞬间会短暂断流，GameEnd 有时晚几秒才到；超时才判定真的没收到（播报里就不提输赢）。"
+          },
+          "default": 30.0
+        },
+        "min_broadcast_game_seconds": {
+          "type": "number",
+          "title": "最短播报对局时长（秒）",
+          "x-title-i18n": {
+            "zh-CN": "最短播报对局时长（秒）",
+            "zh-TW": "最短播报对局时长（秒）",
+            "en": "最短播报对局时长（秒）"
+          },
+          "x-description-i18n": {
+            "zh-CN": "对局时长低于这个数、且战绩全 0 的，不播结算 —— 多半是选人阶段就断流了，播出去只有一个 0—0—0 的战绩。",
+            "zh-TW": "对局时长低于这个数、且战绩全 0 的，不播结算 —— 多半是选人阶段就断流了，播出去只有一个 0—0—0 的战绩。",
+            "en": "对局时长低于这个数、且战绩全 0 的，不播结算 —— 多半是选人阶段就断流了，播出去只有一个 0—0—0 的战绩。"
+          },
+          "default": 180.0
+        },
         "announce": {
           "type": "object",
           "title": "Per-event switches",

@@ -105,6 +105,8 @@ SCALAR_KEYS: frozenset[str] = frozenset(
         "summary_burst_cooldown_seconds",
         "join_replay_max_game_time_seconds",
         "game_over_grace_seconds",
+        "game_end_wait_seconds",
+        "min_broadcast_game_seconds",
         "window_seconds",
         "merge_max_items",
         "stats_cooldown_seconds",
@@ -219,6 +221,19 @@ class PluginConfig:
     # 误判成对局结束，进而放出假的赛后总结。再加一条时间下限兜住。
     game_over_grace: float = 20.0
 
+    # 数据消失后**额外等多久 GameEnd**（秒）。
+    #
+    # 实测：接口在结算瞬间会短暂断流，GameEnd 有时晚几秒才到。早先只用
+    # game_over_grace(20s) 做兜底，来不及就漏掉输赢（11-25 有 2 局这样）。
+    # 这里再宽限一段时间，专门用来 "等 GameEnd 到"；超时才算真的没收到。
+    game_end_wait: float = 30.0
+
+    # 对局时长低于这个秒数、且战绩全 0 的，不播结算。
+    #
+    # 选人阶段 /allgamedata 也会返回数据（gameTime 从 0 涨），很容易被
+    # 当成一局。这类"局"结算时只有一个 0—0—0 的战绩，播出去纯属噪音。
+    min_broadcast_game_seconds: float = 180.0
+
     # 只有主人的事才值得说。
     # 打开后：队友拿人头、队友被打死、对面互杀都不播报；一血只在
     # "主人拿到"或"主人被拿一血"时播报。默认开。
@@ -320,6 +335,10 @@ class PluginConfig:
                 0.0, _float(raw.get("join_replay_max_game_time_seconds"), 90.0)
             ),
             game_over_grace=max(0.0, _float(raw.get("game_over_grace_seconds"), 20.0)),
+            game_end_wait=max(0.0, _float(raw.get("game_end_wait_seconds"), 30.0)),
+            min_broadcast_game_seconds=max(
+                0.0, _float(raw.get("min_broadcast_game_seconds"), 180.0)
+            ),
             only_my_events=_bool(raw.get("only_my_events"), True),
             infer_lane_positions=_bool(raw.get("infer_lane_positions"), True),
             others_multikill_min_streak=_int(

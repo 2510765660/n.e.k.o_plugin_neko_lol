@@ -528,6 +528,22 @@ class NekoLolPlugin(NekoPluginBase):
             return
         if not self._cfg.post_game_summary or self._last_state is None:
             return
+        # 选人阶段 / 刚进游戏就断流的"空局"不播 —— 只有一个 0—0—0 的战绩，
+        # 播出来纯属噪音。实测 11-25 有两局 1 分半就断，播了"战绩 0—0—0"。
+        state_for_check = self._last_state
+        if (
+            state_for_check.me is not None
+            and state_for_check.game_time < self._cfg.min_broadcast_game_seconds
+            and state_for_check.me.kills == 0
+            and state_for_check.me.deaths == 0
+            and state_for_check.me.assists == 0
+        ):
+            self._log(
+                f"[播报] 跳过结算：对局只有 {state_for_check.game_time:.0f} 秒、"
+                f"战绩全 0，多半是选人阶段就断了"
+            )
+            self._post_game_sent = True
+            return
         # 面板上的「对局结束」开关 —— 现在它是唯一的结束播报，
         # 关掉就等于"对局结束什么都不说"。
         if not is_announced("game_end", self._cfg.announce):
@@ -564,11 +580,35 @@ class NekoLolPlugin(NekoPluginBase):
             )
             return
 
+        # 宽限期过了，但**还没收到 GameEnd** —— 再多等一会儿。
+        #
+        # 实测 11-25 有 2 局：打了半小时、战绩正常，但 GameEnd 晚到，
+        # 结果播报里没有输赢。接口在结算瞬间会短暂断流，晚几秒才发
+        # GameEnd 是常态，所以这里专门留一段"等 GameEnd"的时间。
+        if not self._game_result and elapsed < (
+            self._cfg.game_over_grace + self._cfg.game_end_wait
+        ):
+            self._log(
+                f"[对局] 数据中断（第 {self._miss_count} 次，已持续 {elapsed:.0f} 秒），"
+                f"仍在等 GameEnd（最多再等 "
+                f"{self._cfg.game_over_grace + self._cfg.game_end_wait - elapsed:.0f} 秒）"
+            )
+            return
+
         self._in_game = False
         self._session_adopted = False
         self._miss_count = 0
         self._miss_started_at = 0.0
-        self._log("[对局] 对局数据持续消失，判定本局结束")
+        if self._game_result:
+            self._log(
+                f"[对局] 对局数据持续消失，判定本局结束（结算结果 {self._game_result}）"
+            )
+        else:
+            self._log(
+                f"[对局] 对局数据持续消失，判定本局结束"
+                f"（等了 {self._cfg.game_end_wait:.0f} 秒仍没收到 GameEnd，"
+                f"播报里不提输赢）"
+            )
 
         # 把窗口里还没到期的人头先捞出来。接口一消失这些片段就没了，
         # 而"水晶爆炸前刚拿的那个人头"恰恰是值得说的。

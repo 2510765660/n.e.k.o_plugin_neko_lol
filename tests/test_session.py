@@ -80,6 +80,11 @@ class Harness:
         # 会话测试靠"窗口到点结算"驱动播报；关掉搭车模式，否则环境档
         # 会一直等别的播报来带走。搭车行为在 test_offline 里单独测。
         cfg.setdefault("attach_ambient_to_events", False)
+        # 默认的"等 GameEnd 30 秒"会让测试要多推十几轮才有结果；
+        # 用例里默认不等（专门测等待逻辑的用例会自己覆盖）。
+        cfg.setdefault("game_end_wait_seconds", 0.0)
+        # 空局跳过阈值也放宽，避免夹具的短局被误判成选人阶段。
+        cfg.setdefault("min_broadcast_game_seconds", 0.0)
         self.raw_config = cfg
 
     def _push(self, **kwargs) -> dict:
@@ -1587,6 +1592,84 @@ class TestSessionLifecycle(unittest.IsolatedAsyncioTestCase):
             any("刚打完一局" in t for t in new_texts),
             f"关掉开关后仍播了总结：{new_texts}",
         )
+
+    async def test_waits_for_game_end_before_giving_up(self):
+        """数据消失后要多等一段 GameEnd —— 实测有局晚了就漏掉输赢。"""
+        h = await self._harness({
+            "game_over_grace_seconds": 4,
+            "game_end_wait_seconds": 10,
+        })
+        _start_fresh_game(h)
+        await h.poll(times=1)
+        base = len(h.pushed)
+
+        # 断流 8 秒：过了 grace(4s) 但还在 game_end_wait 里 → 不该结束
+        h.client.in_game = False
+        await h.poll(times=4, dt=2.0)
+        self.assertTrue(h.plugin._in_game, "宽限期内就判定结束了")
+        self.assertFalse(
+            any("刚打完一局" in p["parts"][0]["text"] for p in h.pushed[base:]),
+            "宽限期内就播了总结",
+        )
+
+        # GameEnd 这时到了
+        h.client.in_game = True
+        h.client.events.append(fixtures.simple_event(50, "GameEnd", Result="Win"))
+        h.client.data = fixtures.make_all_game_data(game_time=300)
+        await h.poll(times=2, dt=2.0)
+        texts = " | ".join(p["parts"][0]["text"] for p in h.pushed[base:])
+        self.assertIn("赢了", texts, f"GameEnd 到了却没播输赢：{texts}")
+
+    async def test_empty_lobby_match_is_not_broadcast(self):
+        """选人阶段断流的"空局"（战绩全 0）不播结算。"""
+        h = await self._harness({
+            "game_over_grace_seconds": 4,
+            "game_end_wait_seconds": 0,
+            "min_broadcast_game_seconds": 180,
+        })
+        # 1 分半、0—0—0（夹具默认有战绩，这里显式造全 0）
+        players = [
+            fixtures.make_player("我", "Yasuo", "ORDER"),
+            fixtures.make_player("敌人A", "Zed", "CHAOS"),
+        ]
+        h.client.in_game = True
+        h.client.data = fixtures.make_all_game_data(game_time=90.0, players=players)
+        h.client.events = [fixtures.simple_event(0, "GameStart")]
+        await h.poll(times=1)
+        base = len(h.pushed)
+
+        h.client.in_game = False
+        await h.poll(times=6, dt=2.0)
+
+        self.assertFalse(h.plugin._in_game)
+        texts = [p["parts"][0]["text"] for p in h.pushed[base:]]
+        self.assertFalse(
+            any("刚打完一局" in t for t in texts),
+            f"空局播了结算：{texts}",
+        )
+
+    async def test_real_short_match_is_still_broadcast(self):
+        """有战绩的短局照常播 —— 只有"全 0"才跳过。"""
+        h = await self._harness({
+            "game_over_grace_seconds": 4,
+            "game_end_wait_seconds": 0,
+            "min_broadcast_game_seconds": 180,
+        })
+        players = [
+            fixtures.make_player("我", "Yasuo", "ORDER", kills=2, deaths=1),
+            fixtures.make_player("敌人A", "Zed", "CHAOS"),
+        ]
+        h.client.in_game = True
+        h.client.data = fixtures.make_all_game_data(game_time=90.0, players=players)
+        h.client.events = [fixtures.simple_event(0, "GameStart")]
+        await h.poll(times=1)
+        base = len(h.pushed)
+
+        h.client.in_game = False
+        await h.poll(times=6, dt=2.0)
+
+        texts = " | ".join(p["parts"][0]["text"] for p in h.pushed[base:])
+        self.assertIn("刚打完一局", texts, f"有战绩的短局被跳过了：{texts}")
 
     async def test_post_game_not_repeated_by_data_missing_path(self):
         """GameEnd 已经播过总结后，数据消失判定不能再播第二遍。"""
