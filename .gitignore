@@ -12,6 +12,7 @@ build/
 store.db
 .env
 .DS_Store
+config.toml
 
 # 打包产物。注意：打包工具会把源码目录整个扫进 payload，
 # 这个文件如果留在源码目录里，会被打进下一个包里，请放到目录外。

@@ -15,7 +15,7 @@
 是两回事。
 
 线程模型：轮询跑在 ``@timer_interval`` 的定时器线程上（有独立事件循环），
-每个轮询周期内自建 ``aiohttp`` 会话，避免跨事件循环复用连接池。
+本地 HTTP 请求放在线程池执行，避免阻塞事件循环。
 LLM 工具跑在宿主的事件循环上，只读 ``self._last_state`` 这个引用。
 """
 
@@ -345,8 +345,7 @@ class NekoLolPlugin(NekoPluginBase):
 
     async def _poll_body(self, now: float) -> Ok:
         try:
-            # 一次轮询共用一个 HTTP 会话取两个端点 —— 也保证事件和战绩
-            # 来自同一拍，不会错位。
+            # 一次轮询顺序读取事件和战况，避免错开一拍。
             events, data = await self._client.snapshot()
         except NotInGame:
             self._on_data_missing(now)
@@ -891,7 +890,7 @@ class NekoLolPlugin(NekoPluginBase):
             return False
 
         self._first_blood_suppress = None
-        self._log(f"[一血] 抑制同一击杀的人头播报（{killer} → {victim}）")
+        self._log("[一血] 抑制同一击杀的人头播报")
         return True
 
     def _streak_note_for(self, kind: str, streak_before: int) -> str:

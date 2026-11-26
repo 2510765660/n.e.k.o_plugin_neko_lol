@@ -447,24 +447,21 @@ class Narrator:
             cue = self._absorb_pending(cue)
         if cfg.dry_run:
             self._last_emit_at = now
-            self._log(f"[干跑] 本该播报（{cue.key}，{merged or 1} 条合并）：{cue.text[:120]}")
+            self._log(f"[干跑] 本该播报（{cue.key}，{merged or 1} 条合并）")
             return "dry_run"
 
         try:
             result = self._push(cue.text, {"context_type": "neko_lol_event", **cue.meta})
         except Exception as exc:  # 插件进程不能因为播报失败而崩
-            self._log(f"[播报] push_message 抛异常（{cue.key}）：{type(exc).__name__}: {exc}")
+            self._log(f"[播报] push_message 抛异常（{cue.key}）：{type(exc).__name__}")
             return "error"
 
         if not isinstance(result, dict) or not result.get("submitted", True):
-            reason = (result or {}).get("reason") if isinstance(result, dict) else "bad_result"
-            self._log(f"[播报] 宿主拒收（{cue.key}）：{reason}")
+            self._log(f"[播报] 宿主拒收（{cue.key}）")
             return "rejected"
 
         self._last_emit_at = now
-        self._log(
-            f"[播报] 已发送（{cue.key}，合并 {merged or 1} 条）：{cue.body[:80]}"
-        )
+        self._log(f"[播报] 已发送（{cue.key}，合并 {merged or 1} 条）")
         return "sent"
 
     def is_quiet(self, now: float | None = None) -> bool:
